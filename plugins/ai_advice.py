@@ -1,6 +1,6 @@
 from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
-from database_pb import db
+from database_pg import db
 from states import AIState
 from keyboards import get_back_button, get_main_menu
 from utils import edit_or_send
