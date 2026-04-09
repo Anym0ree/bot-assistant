@@ -1,0 +1,150 @@
+import asyncio
+import logging
+import os
+import re
+import tempfile
+import random
+import yt_dlp
+from aiogram import types
+from aiogram.dispatcher import FSMContext
+from keyboards import get_main_menu
+
+bot = None
+
+def set_bot_instance(bot_instance):
+    global bot
+    bot = bot_instance
+
+async def edit_or_send(state: FSMContext, user_id, text, keyboard=None, edit=True):
+    data = await state.get_data()
+    msg_id = data.get('msg_id')
+    chat_id = data.get('chat_id')
+    if edit and msg_id:
+        try:
+            await bot.edit_message_text(text, chat_id=chat_id, message_id=msg_id, reply_markup=keyboard)
+        except Exception:
+            m = await bot.send_message(user_id, text, reply_markup=keyboard)
+            await state.update_data(msg_id=m.message_id, chat_id=m.chat.id)
+    else:
+        m = await bot.send_message(user_id, text, reply_markup=keyboard)
+        await state.update_data(msg_id=m.message_id, chat_id=m.chat.id)
+
+async def delete_dialog_message(state: FSMContext):
+    data = await state.get_data()
+    if data.get('msg_id'):
+        try:
+            await bot.delete_message(chat_id=data['chat_id'], message_id=data['msg_id'])
+        except:
+            pass
+    await state.update_data(msg_id=None, chat_id=None)
+
+async def send_temp_message(user_id, text, delay=3):
+    msg = await bot.send_message(user_id, text)
+    asyncio.create_task(delayed_delete(msg, delay))
+
+async def delayed_delete(message, delay):
+    await asyncio.sleep(delay)
+    try:
+        await message.delete()
+    except:
+        pass
+
+async def safe_delete_message_obj(message_obj):
+    try:
+        await message_obj.delete()
+    except Exception:
+        pass
+
+def safe_remove_file(path):
+    if path and isinstance(path, str) and os.path.exists(path):
+        os.remove(path)
+
+def is_valid_url(url):
+    return re.match(r'^https?://', url) is not None
+
+async def safe_finish(state: FSMContext, message: types.Message, error_text: str = None):
+    await delete_dialog_message(state)
+    await state.finish()
+    if error_text:
+        await send_temp_message(message.chat.id, error_text, 3)
+    await message.answer("Главное меню", reply_markup=get_main_menu())
+
+def is_valid_time_text(value: str) -> bool:
+    if not re.match(r"^\d{2}:\d{2}$", value):
+        return False
+    hh, mm = value.split(":")
+    return 0 <= int(hh) <= 23 and 0 <= int(mm) <= 59
+
+def is_valid_score_text(value: str) -> bool:
+    return value.isdigit() and 1 <= int(value) <= 10
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+]
+
+async def download_media_with_ytdlp(url: str, fmt: str, progress_msg: types.Message):
+    loop = asyncio.get_running_loop()
+    last_percent = {"value": 0.0}
+    async def update_progress(percent: float):
+        try:
+            bar = "█" * int(percent // 10) + "░" * (10 - int(percent // 10))
+            text = f"⏳ Скачивание: [{bar}] {percent:.0f}%"
+            if percent >= 100:
+                text = "✅ Скачивание завершено! Обрабатываю файл..."
+            await bot.edit_message_text(text, chat_id=progress_msg.chat.id, message_id=progress_msg.message_id)
+        except Exception:
+            pass
+    def progress_hook(data):
+        if data.get("status") != "downloading":
+            return
+        percent_str = data.get("_percent_str", "0%").strip().replace("%", "")
+        try:
+            percent = float(percent_str)
+        except ValueError:
+            percent = 0.0
+        if percent - last_percent["value"] >= 5 or percent >= 100:
+            last_percent["value"] = percent
+            loop.call_soon_threadsafe(asyncio.create_task, update_progress(percent))
+    def sync_download():
+        is_youtube = 'youtube.com' in url or 'youtu.be' in url
+        tmp_dir = tempfile.gettempdir()
+        outtmpl = os.path.join(tmp_dir, '%(title).120s-%(id)s.%(ext)s')
+        opts = {
+            "outtmpl": outtmpl, "progress_hooks": [progress_hook], "noplaylist": False,
+            "retries": 10, "fragment_retries": 10, "sleep_interval": 5, "sleep_requests": 5,
+            "throttledratelimit": 1000000, "concurrent_fragment_downloads": 4,
+            "user_agent": random.choice(USER_AGENTS)
+        }
+        cookie_file = "cookies.txt"
+        if os.path.exists(cookie_file):
+            opts["cookiefile"] = cookie_file
+        if is_youtube:
+            opts.update({
+                "extractor_args": {"youtube": {"player_client": ["android", "ios"], "skip": ["webpage"]}},
+                "format": "bestvideo[height<=720]+bestaudio/best[height<=720]",
+            })
+        else:
+            opts["format"] = "best"
+        if fmt == "MP3 (аудио)":
+            opts.update({"format": "bestaudio/best", "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}]})
+        elif fmt == "WAV (аудио)":
+            opts.update({"format": "bestaudio/best", "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "wav"}]})
+        elif fmt == "MP4 (видео)":
+            opts.update({"merge_output_format": "mp4"})
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            downloaded_file = None
+            requested = info.get("requested_downloads") if isinstance(info, dict) else None
+            if requested and isinstance(requested, list):
+                downloaded_file = requested[0].get("filepath")
+            if not downloaded_file:
+                downloaded_file = ydl.prepare_filename(info)
+                if fmt == "MP3 (аудио)":
+                    downloaded_file = downloaded_file.rsplit(".", 1)[0] + ".mp3"
+                elif fmt == "WAV (аудио)":
+                    downloaded_file = downloaded_file.rsplit(".", 1)[0] + ".wav"
+            return downloaded_file, info.get("title", "файл")
+    return await asyncio.to_thread(sync_download)

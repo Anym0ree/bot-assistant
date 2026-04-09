@@ -1,0 +1,93 @@
+from aiogram import Dispatcher, types
+from aiogram.dispatcher import FSMContext
+from database_pg import db
+from states import SleepStates
+from keyboards import get_time_buttons, get_morning_time_buttons, get_energy_stress_buttons, get_yes_no_buttons, get_skip_markup_text, get_main_menu
+from utils import edit_or_send, delete_dialog_message, send_temp_message, safe_finish, is_valid_time_text, is_valid_score_text
+
+async def sleep_start(message: types.Message, state: FSMContext):
+    if await db.has_sleep_today(message.from_user.id):
+        await send_temp_message(message.chat.id, "🛌 Сон за сегодня уже записан.", 3)
+        return
+    await SleepStates.bed_time.set()
+    await edit_or_send(state, message.chat.id, "Во сколько лёг спать?", get_time_buttons(), edit=False)
+
+async def sleep_bed_time(message: types.Message, state: FSMContext):
+    if message.text in ("❌ Отмена", "⬅️ Назад"):
+        await safe_finish(state, message)
+        return
+    if message.text == "Другое":
+        await send_temp_message(message.chat.id, "Введи время в формате ЧЧ:ММ, например 23:45", 3)
+        return
+    if not is_valid_time_text(message.text):
+        await send_temp_message(message.chat.id, "❌ Укажи время в формате ЧЧ:ММ", 3)
+        return
+    await state.update_data(bed_time=message.text)
+    await SleepStates.wake_time.set()
+    await edit_or_send(state, message.chat.id, "Во сколько проснулся?", get_morning_time_buttons(), edit=True)
+
+async def sleep_wake_time(message: types.Message, state: FSMContext):
+    if message.text in ("❌ Отмена", "⬅️ Назад"):
+        await safe_finish(state, message)
+        return
+    if message.text == "Другое":
+        await send_temp_message(message.chat.id, "Введи время в формате ЧЧ:ММ, например 07:30", 3)
+        return
+    if not is_valid_time_text(message.text):
+        await send_temp_message(message.chat.id, "❌ Укажи время в формате ЧЧ:ММ", 3)
+        return
+    await state.update_data(wake_time=message.text)
+    await SleepStates.quality.set()
+    await edit_or_send(state, message.chat.id, "Оцени качество сна (1–10):", get_energy_stress_buttons(), edit=True)
+
+async def sleep_quality(message: types.Message, state: FSMContext):
+    if message.text in ("❌ Отмена", "⬅️ Назад"):
+        await safe_finish(state, message)
+        return
+    if not is_valid_score_text(message.text):
+        await send_temp_message(message.chat.id, "❌ Оценка должна быть от 1 до 10", 3)
+        return
+    await state.update_data(quality=int(message.text))
+    await SleepStates.woke_night.set()
+    await edit_or_send(state, message.chat.id, "Просыпался ночью?", get_yes_no_buttons(), edit=True)
+
+async def sleep_woke_night(message: types.Message, state: FSMContext):
+    if message.text in ("❌ Отмена", "⬅️ Назад"):
+        await safe_finish(state, message)
+        return
+    if message.text not in ("✅ Да", "❌ Нет"):
+        await send_temp_message(message.chat.id, "❌ Выбери ответ кнопками", 3)
+        return
+    await state.update_data(woke_night=(message.text == "✅ Да"))
+    await SleepStates.note.set()
+    await edit_or_send(state, message.chat.id, "Заметка по сну? (можно пропустить)", get_skip_markup_text(), edit=True)
+
+async def sleep_note(message: types.Message, state: FSMContext):
+    if message.text in ("❌ Отмена", "⬅️ Назад"):
+        await safe_finish(state, message)
+        return
+    data = await state.get_data()
+    note = "" if message.text == "Пропустить" else message.text
+    saved = await db.add_sleep(
+        message.from_user.id,
+        data.get("bed_time"),
+        data.get("wake_time"),
+        data.get("quality"),
+        data.get("woke_night"),
+        note
+    )
+    await delete_dialog_message(state)
+    await state.finish()
+    if saved:
+        await send_temp_message(message.chat.id, "✅ Сон сохранён!", 2)
+    else:
+        await send_temp_message(message.chat.id, "🛌 Сон за сегодня уже записан.", 3)
+    await message.answer("Главное меню", reply_markup=get_main_menu())
+
+def register(dp: Dispatcher):
+    dp.register_message_handler(sleep_start, text="🛌 Сон", state="*")
+    dp.register_message_handler(sleep_bed_time, state=SleepStates.bed_time)
+    dp.register_message_handler(sleep_wake_time, state=SleepStates.wake_time)
+    dp.register_message_handler(sleep_quality, state=SleepStates.quality)
+    dp.register_message_handler(sleep_woke_night, state=SleepStates.woke_night)
+    dp.register_message_handler(sleep_note, state=SleepStates.note)
