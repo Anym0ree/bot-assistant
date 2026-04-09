@@ -283,6 +283,7 @@ class Database:
         async with self.pool.acquire() as conn:
             await conn.execute("UPDATE reminders SET is_active = 0 WHERE user_id = $1 AND id = $2", user_id, reminder_id)
 
+    # Оригинальный метод get_today_food_and_drinks (без id) – оставляем для совместимости
     async def get_today_food_and_drinks(self, user_id):
         today = await self.get_user_local_date(user_id)
         async with self.pool.acquire() as conn:
@@ -296,6 +297,32 @@ class Database:
         combined.sort(key=lambda x: x["time"])
         return combined
 
+    # НОВЫЙ МЕТОД: получает записи с ID для удаления
+    async def get_today_food_and_drinks_with_ids(self, user_id):
+        today = await self.get_user_local_date(user_id)
+        async with self.pool.acquire() as conn:
+            food_rows = await conn.fetch("SELECT id, time, meal_type, food_text FROM food WHERE user_id = $1 AND date = $2", user_id, today)
+            drink_rows = await conn.fetch("SELECT id, time, drink_type, amount FROM drinks WHERE user_id = $1 AND date = $2", user_id, today)
+        combined = []
+        for r in food_rows:
+            combined.append({"id": r[0], "type": "food", "time": r[1], "text": f"{r[2]}: {r[3]}"})
+        for r in drink_rows:
+            combined.append({"id": r[0], "type": "drink", "time": r[1], "text": f"{r[2]}: {r[3]}"})
+        combined.sort(key=lambda x: x["time"])
+        return combined
+
+    # НОВЫЕ МЕТОДЫ ДЛЯ УДАЛЕНИЯ
+    async def delete_food_by_id(self, user_id, food_id):
+        async with self.pool.acquire() as conn:
+            result = await conn.execute("DELETE FROM food WHERE user_id = $1 AND id = $2", user_id, food_id)
+            return result != "DELETE 0"
+
+    async def delete_drink_by_id(self, user_id, drink_id):
+        async with self.pool.acquire() as conn:
+            result = await conn.execute("DELETE FROM drinks WHERE user_id = $1 AND id = $2", user_id, drink_id)
+            return result != "DELETE 0"
+
+    # Остальные методы (get_stats, export_all, _load_json) без изменений
     async def get_stats(self, user_id):
         async with self.pool.acquire() as conn:
             sleep_count = (await conn.fetchval("SELECT COUNT(*) FROM sleep WHERE user_id = $1", user_id)) or 0
