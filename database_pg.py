@@ -117,6 +117,7 @@ class Database:
                 )
             ''')
 
+    # ========== ОСНОВНЫЕ МЕТОДЫ (без изменений) ==========
     async def get_user_timezone(self, user_id):
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT timezone_offset FROM users WHERE user_id = $1", user_id)
@@ -283,7 +284,7 @@ class Database:
         async with self.pool.acquire() as conn:
             await conn.execute("UPDATE reminders SET is_active = 0 WHERE user_id = $1 AND id = $2", user_id, reminder_id)
 
-    # Оригинальный метод get_today_food_and_drinks (без id) – оставляем для совместимости
+    # Оригинальный метод get_today_food_and_drinks (без id)
     async def get_today_food_and_drinks(self, user_id):
         today = await self.get_user_local_date(user_id)
         async with self.pool.acquire() as conn:
@@ -297,7 +298,7 @@ class Database:
         combined.sort(key=lambda x: x["time"])
         return combined
 
-    # НОВЫЙ МЕТОД: получает записи с ID для удаления
+    # НОВЫЙ МЕТОД С ID
     async def get_today_food_and_drinks_with_ids(self, user_id):
         today = await self.get_user_local_date(user_id)
         async with self.pool.acquire() as conn:
@@ -311,7 +312,7 @@ class Database:
         combined.sort(key=lambda x: x["time"])
         return combined
 
-    # НОВЫЕ МЕТОДЫ ДЛЯ УДАЛЕНИЯ
+    # НОВЫЕ МЕТОДЫ УДАЛЕНИЯ
     async def delete_food_by_id(self, user_id, food_id):
         async with self.pool.acquire() as conn:
             result = await conn.execute("DELETE FROM food WHERE user_id = $1 AND id = $2", user_id, food_id)
@@ -322,7 +323,7 @@ class Database:
             result = await conn.execute("DELETE FROM drinks WHERE user_id = $1 AND id = $2", user_id, drink_id)
             return result != "DELETE 0"
 
-    # Остальные методы (get_stats, export_all, _load_json) без изменений
+    # СТАТИСТИКА, ЭКСПОРТ, _LOAD_JSON (без изменений)
     async def get_stats(self, user_id):
         async with self.pool.acquire() as conn:
             sleep_count = (await conn.fetchval("SELECT COUNT(*) FROM sleep WHERE user_id = $1", user_id)) or 0
