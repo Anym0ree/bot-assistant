@@ -41,7 +41,7 @@ async def export_any_url(message: types.Message, state: FSMContext):
         return
     await state.update_data(url=url)
     await ExportStates.format.set()
-    await edit_or_send(state, message.chat.id, "Выбери формат:", reply_markup=get_download_formats_keyboard(source="unknown"), edit=True)
+    await edit_or_send(state, message.chat.id, "Выбери формат:", keyboard=get_download_formats_keyboard(source="unknown"), edit=True)
 
 async def export_any_format(message: types.Message, state: FSMContext):
     if message.text == "⬅️ Назад":
