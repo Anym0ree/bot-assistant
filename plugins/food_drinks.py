@@ -1,6 +1,5 @@
 from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database_pg import db
 from states import FoodDrinkStates, FoodStates, DrinkStates
 from keyboards import get_food_drink_menu, get_food_drink_type_buttons, get_meal_type_buttons, get_drink_type_buttons, get_drink_amount_buttons, get_back_button, get_main_menu
@@ -45,48 +44,56 @@ async def add_food_drink_type(message: types.Message, state: FSMContext):
     else:
         await edit_or_send(state, message.chat.id, "Выбери из предложенных вариантов.", get_food_drink_type_buttons(), edit=True)
 
-# НОВАЯ ФУНКЦИЯ ПРОСМОТРА С УДАЛЕНИЕМ
+# ПРОСМОТР СПИСКА С НОМЕРАМИ
 async def view_food_drink_today(message: types.Message):
     user_id = message.from_user.id
-    items = await db.get_today_food_and_drinks_with_ids(user_id)  # используем новый метод из database_pg
+    items = await db.get_today_food_and_drinks_with_ids(user_id)
     if not items:
         await message.answer("🍽🥤 За сегодня ещё нет записей о еде и напитках.", reply_markup=get_food_drink_menu())
         return
 
     text = "🍽🥤 *Еда и напитки сегодня:*\n\n"
-    keyboard = InlineKeyboardMarkup(row_width=1)
-    for item in items:
-        # item = {"id": int, "type": "food"/"drink", "time": str, "text": str}
-        text += f"🕐 {item['time']} — {item['type'].capitalize()}: {item['text']}\n"
-        callback_data = f"delete_food_{item['id']}" if item['type'] == 'food' else f"delete_drink_{item['id']}"
-        keyboard.insert(InlineKeyboardButton(f"🗑 Удалить", callback_data=callback_data))
-    text += "\n_Нажмите на кнопку удаления рядом с записью._"
-    await message.answer(text, parse_mode="Markdown", reply_markup=keyboard)
+    for idx, item in enumerate(items, start=1):
+        text += f"{idx}. 🕐 {item['time']} — {item['type'].capitalize()}: {item['text']}\n"
+    text += "\n✏️ *Команды:*\n`удалить еду <номер>` — удалить запись о еде\n`удалить напиток <номер>` — удалить запись о напитке\n\n*Пример:* `удалить еду 2`"
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_food_drink_menu())
 
-# ОБРАБОТЧИК КНОПОК УДАЛЕНИЯ
-async def delete_food_callback(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    data = callback_query.data
-
-    if data.startswith("delete_food_"):
-        food_id = int(data.split("_")[2])
-        success = await db.delete_food_by_id(user_id, food_id)
-        if success:
-            await callback_query.answer("✅ Запись о еде удалена", show_alert=False)
-        else:
-            await callback_query.answer("❌ Не найдено или уже удалено", show_alert=True)
-    elif data.startswith("delete_drink_"):
-        drink_id = int(data.split("_")[2])
-        success = await db.delete_drink_by_id(user_id, drink_id)
-        if success:
-            await callback_query.answer("✅ Запись о напитке удалена", show_alert=False)
-        else:
-            await callback_query.answer("❌ Не найдено или уже удалено", show_alert=True)
-    else:
+# ОБРАБОТЧИК КОМАНДЫ УДАЛЕНИЯ
+async def delete_food_by_number(message: types.Message):
+    user_id = message.from_user.id
+    parts = message.text.split()
+    if len(parts) != 3:
+        await send_temp_message(message.chat.id, "❌ Неверный формат. Пиши: `удалить еду 2` или `удалить напиток 3`", 3)
+        return
+    action, what, num_str = parts[0], parts[1], parts[2]
+    if action.lower() != "удалить":
+        return
+    try:
+        num = int(num_str)
+    except ValueError:
+        await send_temp_message(message.chat.id, "❌ Номер должен быть числом.", 3)
         return
 
-    # Обновляем сообщение – показываем актуальный список
-    await view_food_drink_today(callback_query.message)
+    items = await db.get_today_food_and_drinks_with_ids(user_id)
+    if not items or num < 1 or num > len(items):
+        await send_temp_message(message.chat.id, f"❌ Неверный номер. Доступно записей: {len(items)}", 3)
+        return
+
+    target = items[num - 1]
+    if what.lower() == "еду" and target['type'] == 'food':
+        success = await db.delete_food_by_id(user_id, target['id'])
+        if success:
+            await send_temp_message(message.chat.id, f"✅ Запись о еде удалена.", 2)
+        else:
+            await send_temp_message(message.chat.id, f"❌ Не удалось удалить.", 3)
+    elif what.lower() == "напиток" and target['type'] == 'drink':
+        success = await db.delete_drink_by_id(user_id, target['id'])
+        if success:
+            await send_temp_message(message.chat.id, f"✅ Запись о напитке удалена.", 2)
+        else:
+            await send_temp_message(message.chat.id, f"❌ Не удалось удалить.", 3)
+    else:
+        await send_temp_message(message.chat.id, f"❌ Несоответствие типа. Запись #{num} — это {target['type']}, а вы пытаетесь удалить {what}.", 3)
 
 # ========== ДОБАВЛЕНИЕ ЕДЫ ==========
 async def food_meal_type(message: types.Message, state: FSMContext):
@@ -150,4 +157,4 @@ def register(dp: Dispatcher):
     dp.register_message_handler(drink_type, state=DrinkStates.drink_type)
     dp.register_message_handler(drink_amount, state=DrinkStates.amount)
     dp.register_message_handler(handle_add_another, state="waiting_add_another")
-    dp.register_callback_query_handler(delete_food_callback, lambda c: c.data.startswith(("delete_food_", "delete_drink_")))
+    dp.register_message_handler(delete_food_by_number, regexp=r'^удалить (еду|напиток) \d+$', state='*')
