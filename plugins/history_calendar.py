@@ -109,7 +109,6 @@ def format_user_data(data: dict, date_str: str) -> str:
     else:
         text += "   • Нет заметок\n"
 
-    # Добавляем инструкцию по редактированию
     text += "\n━━━━━━━━━━━━━━━━━━━━\n"
     text += "✏️ *Редактирование:*\n"
     if data['food']:
@@ -117,12 +116,12 @@ def format_user_data(data: dict, date_str: str) -> str:
     if data['drinks']:
         text += "   • `редактировать напиток <номер>` – изменить запись о напитке\n"
     if data['sleep']:
-        text += "   • `редактировать сон <номер>` – изменить сон (номер из списка всех снов)\n"
+        text += "   • `редактировать сон <номер>` – изменить сон\n"
     if data['checkin']:
         text += "   • `редактировать чек-ин <номер>` – изменить чек-ин\n"
     if data['summary']:
         text += "   • `редактировать итог <номер>` – изменить итог дня\n"
-    text += "\n📌 *Номера для сна, чек-ина, итога дня можно посмотреть командами:*\n"
+    text += "\n📌 *Команды для просмотра всех записей:*\n"
     text += "   • `мои сны` – список всех записей сна\n"
     text += "   • `мои чек-ины` – список всех чек-инов\n"
     text += "   • `мои итоги` – список всех итогов дня\n"
@@ -189,7 +188,7 @@ async def show_history(message: types.Message, date_str: str):
 async def back_to_main(message: types.Message):
     await message.answer("Главное меню", reply_markup=get_main_menu())
 
-# ========== КОМАНДЫ ДЛЯ ПРОСМОТРА ВСЕХ ЗАПИСЕЙ ==========
+# ========== КОМАНДЫ ДЛЯ ПРОСМОТРА ВСЕХ ЗАПИСЕЙ (ТОЛЬКО ТЕКСТ) ==========
 async def list_all_sleep(message: types.Message):
     user_id = message.from_user.id
     async with db.pool.acquire() as conn:
@@ -246,11 +245,7 @@ def register(dp: Dispatcher):
     dp.register_message_handler(history_ask_date, text="✏️ Ввести дату", state="*")
     dp.register_message_handler(history_process_date, state="waiting_for_history_date")
     dp.register_message_handler(back_to_main, text="⬅️ Назад", state="*")
-    # Команды с / (работают в любом месте)
-    dp.register_message_handler(list_all_sleep, commands=['мои сны'], state='*')
-    dp.register_message_handler(list_all_checkins, commands=['мои чек-ины'], state='*')
-    dp.register_message_handler(list_all_summaries, commands=['мои итоги'], state='*')
-    # Дублируем как текстовые (без /) – на всякий случай
+    # Текстовые команды (без /)
     dp.register_message_handler(list_all_sleep, text="мои сны", state='*')
     dp.register_message_handler(list_all_checkins, text="мои чек-ины", state='*')
     dp.register_message_handler(list_all_summaries, text="мои итоги", state='*')
