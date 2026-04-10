@@ -27,7 +27,24 @@ class Database:
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
                                    WHERE table_name='reminders' AND column_name='remind_utc') THEN
                         ALTER TABLE reminders ADD COLUMN remind_utc TIMESTAMP;
-                        RAISE NOTICE 'Колонка remind_utc добавлена';
+                    END IF;
+                END $$;
+            ''')
+            # Добавляем колонки для профиля пользователя
+            await conn.execute('''
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                   WHERE table_name='users' AND column_name='age') THEN
+                        ALTER TABLE users ADD COLUMN age INTEGER DEFAULT 0;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                   WHERE table_name='users' AND column_name='height') THEN
+                        ALTER TABLE users ADD COLUMN height INTEGER DEFAULT 0;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                   WHERE table_name='users' AND column_name='weight') THEN
+                        ALTER TABLE users ADD COLUMN weight INTEGER DEFAULT 0;
                     END IF;
                 END $$;
             ''')
@@ -39,7 +56,10 @@ class Database:
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
                     timezone_offset INTEGER DEFAULT 0,
-                    created_at TIMESTAMP
+                    created_at TIMESTAMP,
+                    age INTEGER DEFAULT 0,
+                    height INTEGER DEFAULT 0,
+                    weight INTEGER DEFAULT 0
                 )
             ''')
             await conn.execute('''
@@ -128,7 +148,6 @@ class Database:
                     created_at TIMESTAMP
                 )
             ''')
-            # Новая таблица для истории AI
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS ai_history (
                     id SERIAL PRIMARY KEY,
@@ -140,6 +159,26 @@ class Database:
             ''')
             await conn.execute('CREATE INDEX IF NOT EXISTS idx_ai_history_user_id ON ai_history(user_id)')
             await conn.execute('CREATE INDEX IF NOT EXISTS idx_ai_history_created_at ON ai_history(created_at)')
+
+    # ========== МЕТОДЫ ПРОФИЛЯ ==========
+    async def get_user_profile(self, user_id):
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT age, height, weight FROM users WHERE user_id = $1",
+                user_id
+            )
+            if row:
+                return {"age": row[0], "height": row[1], "weight": row[2]}
+            return {"age": 0, "height": 0, "weight": 0}
+
+    async def update_user_profile(self, user_id, age=None, height=None, weight=None):
+        async with self.pool.acquire() as conn:
+            if age is not None:
+                await conn.execute("UPDATE users SET age = $1 WHERE user_id = $2", age, user_id)
+            if height is not None:
+                await conn.execute("UPDATE users SET height = $1 WHERE user_id = $2", height, user_id)
+            if weight is not None:
+                await conn.execute("UPDATE users SET weight = $1 WHERE user_id = $2", weight, user_id)
 
     # ========== МЕТОДЫ ДЛЯ AI ИСТОРИИ ==========
     async def save_ai_message(self, user_id: int, role: str, content: str):
