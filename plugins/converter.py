@@ -9,9 +9,14 @@ from states import ConverterStates
 from keyboards import get_converter_formats_keyboard, get_back_button, get_main_menu
 from utils import edit_or_send, delete_dialog_message, send_temp_message, safe_finish, safe_remove_file
 
+# ========== КОНВЕРТЕР ==========
 async def converter_menu(message: types.Message, state: FSMContext):
     await ConverterStates.file.set()
-    m = await message.answer("Отправь мне файл (видео, аудио, изображение), который хочешь конвертировать.", reply_markup=get_back_button())
+    m = await message.answer(
+        "🔄 Отправь мне файл (видео, аудио, изображение), который хочешь конвертировать.\n\n"
+        "Доступные форматы: MP4, GIF, MP3, WEBM",
+        reply_markup=get_back_button()
+    )
     await state.update_data(msg_id=m.message_id, chat_id=m.chat.id)
 
 async def converter_file_text(message: types.Message, state: FSMContext):
@@ -22,7 +27,7 @@ async def converter_file_text(message: types.Message, state: FSMContext):
 
 async def converter_file(message: types.Message, state: FSMContext):
     if not (message.document or message.video or message.audio):
-        await send_temp_message(message.chat.id, "❌ Неподдерживаемый тип файла. Пожалуйста, отправь документ, видео или аудио.", 3)
+        await send_temp_message(message.chat.id, "❌ Неподдерживаемый тип файла. Отправь документ, видео или аудио.", 3)
         return
     if message.document:
         file_id = message.document.file_id
@@ -74,6 +79,9 @@ async def converter_format(message: types.Message, state: FSMContext):
 
     spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
     progress_msg = await message.answer(f"⏳ Конвертирую... {spinner[0]}")
+    spinner_task = None
+    output_path = None
+
     async def update_spinner():
         i = 0
         while True:
@@ -83,46 +91,73 @@ async def converter_format(message: types.Message, state: FSMContext):
                 await message.bot.edit_message_text(f"⏳ Конвертирую... {spinner[i]}", chat_id=progress_msg.chat.id, message_id=progress_msg.message_id)
             except:
                 break
-    spinner_task = asyncio.create_task(update_spinner())
-    output_path = None
+
     try:
+        # Проверка наличия ffmpeg
         ffmpeg_path = shutil.which('ffmpeg')
         if not ffmpeg_path:
             ffmpeg_path = os.path.join(os.getcwd(), 'ffmpeg')
             if not os.path.exists(ffmpeg_path):
                 raise Exception("ffmpeg не найден в системе. Установите ffmpeg или поместите его в папку с ботом.")
+
+        # Создаём временный файл для результата
         with tempfile.NamedTemporaryFile(delete=False, suffix=f".{fmt.lower()}", dir="/tmp") as tmp_out:
             output_path = tmp_out.name
-        cmd = [ffmpeg_path, '-i', input_path, output_path]
+
+        # Формируем команду ffmpeg
+        cmd = [ffmpeg_path, '-i', input_path, '-y']  # -y для перезаписи
         if fmt == "GIF":
-            cmd = [ffmpeg_path, '-i', input_path, '-vf', 'scale=640:-1:flags=lanczos,fps=15,split[s0][s1];[s0]palettegen=max_colors=256[p];[s1][p]paletteuse', '-loop', '0', output_path]
-        process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            cmd.extend(['-vf', 'scale=640:-1:flags=lanczos,fps=15,split[s0][s1];[s0]palettegen=max_colors=256[p];[s1][p]paletteuse', '-loop', '0'])
+        elif fmt == "MP3":
+            cmd.extend(['-vn', '-acodec', 'libmp3lame', '-q:a', '2'])  # качество ~190 kbps
+        elif fmt == "WEBM":
+            cmd.extend(['-c:v', 'libvpx', '-c:a', 'libopus', '-b:v', '1M'])
+        elif fmt == "MP4":
+            cmd.extend(['-c:v', 'libx264', '-preset', 'fast', '-c:a', 'aac'])
+        cmd.append(output_path)
+
+        spinner_task = asyncio.create_task(update_spinner())
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
         _, stderr = await process.communicate()
         if process.returncode != 0:
             error_msg = stderr.decode("utf-8", errors="ignore").strip()[:200]
             raise Exception(f"ffmpeg error: {error_msg}")
+
         file_size = os.path.getsize(output_path)
         max_size = 50 * 1024 * 1024
         if file_size > max_size:
-            raise Exception(f"File too large: {file_size / (1024*1024):.1f} MB > 50 MB limit.")
-        spinner_task.cancel()
-        try:
-            await spinner_task
-        except asyncio.CancelledError:
-            pass
+            raise Exception(f"Файл слишком большой: {file_size / (1024*1024):.1f} MB > 50 MB. Попробуй другой формат.")
+
+        if spinner_task:
+            spinner_task.cancel()
+            try:
+                await spinner_task
+            except asyncio.CancelledError:
+                pass
         await message.bot.edit_message_text("✅ Конвертация завершена! Отправляю файл...", chat_id=progress_msg.chat.id, message_id=progress_msg.message_id)
         with open(output_path, 'rb') as f:
             await message.answer_document(f, caption=f"✅ Конвертировано в {fmt.upper()}")
     except Exception as e:
         logging.error(f"Ошибка конвертации: {e}")
-        spinner_task.cancel()
-        try:
-            await spinner_task
-        except asyncio.CancelledError:
-            pass
+        if spinner_task:
+            spinner_task.cancel()
+            try:
+                await spinner_task
+            except asyncio.CancelledError:
+                pass
         error_msg = str(e)
         if "File too large" in error_msg:
             await message.bot.edit_message_text(f"❌ {error_msg}", chat_id=progress_msg.chat.id, message_id=progress_msg.message_id)
+        elif "ffmpeg not found" in error_msg:
+            await message.bot.edit_message_text(
+                "❌ ffmpeg не установлен на сервере. Конвертация недоступна.\n"
+                "Пожалуйста, обратитесь к администратору для установки ffmpeg.",
+                chat_id=progress_msg.chat.id, message_id=progress_msg.message_id
+            )
         else:
             await message.bot.edit_message_text(f"❌ Ошибка конвертации: {error_msg}\nПопробуй другой файл или формат.", chat_id=progress_msg.chat.id, message_id=progress_msg.message_id)
         await asyncio.sleep(3)
@@ -132,6 +167,7 @@ async def converter_format(message: types.Message, state: FSMContext):
         safe_remove_file(output_path)
     await message.answer("Главное меню", reply_markup=get_main_menu())
 
+# ========== РЕГИСТРАЦИЯ ==========
 def register(dp: Dispatcher):
     dp.register_message_handler(converter_menu, text="🔄 Конвертер", state="*")
     dp.register_message_handler(converter_file_text, state=ConverterStates.file, content_types=types.ContentTypes.TEXT)
