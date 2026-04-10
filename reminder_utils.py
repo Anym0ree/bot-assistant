@@ -31,5 +31,7 @@ def get_default_reminders():
     return {
         "sleep": {"enabled": True, "time": "09:00"},
         "checkins": {"enabled": True, "times": ["12:00", "16:00", "20:00"]},
-        "summary": {"enabled": True, "time": "22:30"}
+        "summary": {"enabled": True, "time": "22:30"},
+        "water": {"enabled": True, "times": ["10:00", "14:00", "18:00", "22:00"]},
+        "meals": {"enabled": True, "times": ["09:00", "13:00", "19:00"]}
     }
