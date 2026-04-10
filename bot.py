@@ -51,69 +51,42 @@ def load_plugins(dispatcher, plugins_dir="plugins"):
 
 # ========== ШЕДУЛЕР ==========
 async def check_custom_reminders():
-    """Проверка напоминаний (сон, чек-ины, итог дня)"""
     try:
-        reminder_file = "reminder_settings.json"
-        if not os.path.exists(reminder_file):
-            logging.warning("Файл reminder_settings.json не найден")
+        if not os.path.exists("reminder_settings.json"):
             return
-        
-        with open(reminder_file, "r") as f:
+        with open("reminder_settings.json", "r") as f:
             all_data = json.load(f)
-        
+
         now_utc = datetime.utcnow()
-        for user_id_str, settings_data in all_data.items():
+        for user_id_str, settings in all_data.items():
             user_id = int(user_id_str)
-            
-            # Получаем часовой пояс пользователя
             tz = await db.get_user_timezone(user_id)
             if tz == 0:
-                tz = 3  # по умолчанию Москва
-                logging.warning(f"У пользователя {user_id} часовой пояс 0, ставим UTC+3")
-            
+                tz = 3  # UTC+3 по умолчанию
             user_time = now_utc + timedelta(hours=tz)
             current_time = user_time.strftime("%H:%M")
-            today_str = user_time.strftime("%Y-%m-%d")
-            
-            # 1. НАПОМИНАНИЕ О СНЕ
-            if settings_data.get("sleep", {}).get("enabled", False):
-                sleep_time = settings_data["sleep"].get("time", "09:00")
-                if sleep_time == current_time:
-                    # Проверяем, записан ли уже сон сегодня
-                    has_sleep = await db.has_sleep_today(user_id)
-                    if not has_sleep:
-                        await bot.send_message(user_id, "🛌 Пора записать сон")
-                        logging.info(f"Напоминание о сне отправлено {user_id} в {current_time}")
-                    else:
-                        logging.info(f"У {user_id} сон уже записан, напоминание не отправлено")
-            
-            # 2. НАПОМИНАНИЕ О ЧЕК-ИНАХ
-            if settings_data.get("checkins", {}).get("enabled", False):
-                check_times = settings_data["checkins"].get("times", [])
-                if current_time in check_times:
-                    # Проверяем, был ли уже чек-ин сегодня
-                    checkins = await db._load_json(user_id, "checkins.json")
-                    has_today_checkin = any(c.get("date") == today_str for c in checkins)
-                    if not has_today_checkin:
-                        await bot.send_message(user_id, "⚡️ Сделай чек-ин")
-                        logging.info(f"Напоминание о чек-ине отправлено {user_id} в {current_time}")
-                    else:
-                        logging.info(f"У {user_id} чек-ин уже есть, напоминание не отправлено")
-            
-            # 3. НАПОМИНАНИЕ ОБ ИТОГЕ ДНЯ
-            if settings_data.get("summary", {}).get("enabled", False):
-                summary_time = settings_data["summary"].get("time", "22:30")
-                if summary_time == current_time:
-                    target_date = await db.get_target_date_for_summary(user_id)
-                    if target_date and not await db.has_day_summary_for_date(user_id, target_date):
-                        await bot.send_message(user_id, "📝 Не забудь подвести итог дня")
-                        logging.info(f"Напоминание об итоге дня отправлено {user_id} в {current_time}")
-                    else:
-                        logging.info(f"Итог дня уже есть или не нужно, напоминание не отправлено")
-                        
+
+            # Сон
+            if settings.get("sleep", {}).get("enabled", False):
+                if settings["sleep"].get("time") == current_time:
+                    await bot.send_message(user_id, "🛌 Пора записать сон")
+                    logging.info(f"Напомнили о сне {user_id} в {current_time}")
+
+            # Чек-ины
+            if settings.get("checkins", {}).get("enabled", False):
+                if current_time in settings["checkins"].get("times", []):
+                    await bot.send_message(user_id, "⚡️ Сделай чек-ин")
+                    logging.info(f"Напомнили о чек-ине {user_id} в {current_time}")
+
+            # Итог дня
+            if settings.get("summary", {}).get("enabled", False):
+                if settings["summary"].get("time") == current_time:
+                    await bot.send_message(user_id, "📝 Не забудь подвести итог дня")
+                    logging.info(f"Напомнили об итоге дня {user_id} в {current_time}")
+
     except Exception as e:
         logging.error(f"Ошибка в check_custom_reminders: {e}", exc_info=True)
-
+        
 async def check_reminders():
     """Проверка обычных напоминаний (созданных пользователем)"""
     try:
