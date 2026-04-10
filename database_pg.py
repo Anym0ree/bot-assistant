@@ -19,7 +19,7 @@ class Database:
             command_timeout=60
         )
         await self._init_tables()
-        # Автоматически добавляем колонку remind_utc, если её нет
+        # Добавляем колонку remind_utc, если её нет
         async with self.pool.acquire() as conn:
             await conn.execute('''
                 DO $$
@@ -128,7 +128,40 @@ class Database:
                     created_at TIMESTAMP
                 )
             ''')
+            # Новая таблица для истории AI
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS ai_history (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            ''')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_ai_history_user_id ON ai_history(user_id)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_ai_history_created_at ON ai_history(created_at)')
 
+    # ========== МЕТОДЫ ДЛЯ AI ИСТОРИИ ==========
+    async def save_ai_message(self, user_id: int, role: str, content: str):
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO ai_history (user_id, role, content, created_at) VALUES ($1, $2, $3, NOW())",
+                user_id, role, content
+            )
+
+    async def get_ai_history(self, user_id: int, limit: int = 10) -> list:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT role, content FROM ai_history WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
+                user_id, limit
+            )
+        return [{"role": row[0], "content": row[1]} for row in reversed(rows)]
+
+    async def clear_ai_history(self, user_id: int):
+        async with self.pool.acquire() as conn:
+            await conn.execute("DELETE FROM ai_history WHERE user_id = $1", user_id)
+
+    # ========== ОСТАЛЬНЫЕ МЕТОДЫ (БЕЗ ИЗМЕНЕНИЙ) ==========
     async def get_user_timezone(self, user_id):
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT timezone_offset FROM users WHERE user_id = $1", user_id)
