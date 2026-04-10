@@ -79,3 +79,7 @@ class ReminderCustomizeStates(StatesGroup):
     change_sleep_time = State()
     change_checkins_times = State()
     change_summary_time = State()
+    water_menu = State()
+    change_water_times = State()
+    meals_menu = State()
+    change_meals_times = State()
