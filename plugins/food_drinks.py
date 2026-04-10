@@ -8,7 +8,7 @@ from utils import edit_or_send, delete_dialog_message, send_temp_message, safe_f
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 async def ask_add_another(message: types.Message, state: FSMContext):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("➕ Добавить ещё", "🏠 Главное меню")
+    kb.add("➕ Добавить ещё", "📋 Посмотреть сегодня", "🏠 Главное меню")
     await message.answer("✅ Добавлено! Что дальше?", reply_markup=kb)
     await state.set_state("waiting_add_another")
 
@@ -16,6 +16,9 @@ async def handle_add_another(message: types.Message, state: FSMContext):
     if message.text == "➕ Добавить ещё":
         await state.finish()
         await add_food_drink_start(message, state)
+    elif message.text == "📋 Посмотреть сегодня":
+        await state.finish()
+        await view_food_drink_today(message)
     else:
         await state.finish()
         await message.answer("Главное меню", reply_markup=get_main_menu())
@@ -44,7 +47,6 @@ async def add_food_drink_type(message: types.Message, state: FSMContext):
     else:
         await edit_or_send(state, message.chat.id, "Выбери из предложенных вариантов.", get_food_drink_type_buttons(), edit=True)
 
-# ПРОСМОТР СПИСКА С НОМЕРАМИ
 async def view_food_drink_today(message: types.Message):
     user_id = message.from_user.id
     items = await db.get_today_food_and_drinks_with_ids(user_id)
@@ -58,7 +60,6 @@ async def view_food_drink_today(message: types.Message):
     text += "\n✏️ *Команды:*\n`удалить еду <номер>` — удалить запись о еде\n`удалить напиток <номер>` — удалить запись о напитке\n\n*Пример:* `удалить еду 2`"
     await message.answer(text, parse_mode="Markdown", reply_markup=get_food_drink_menu())
 
-# ОБРАБОТЧИК КОМАНДЫ УДАЛЕНИЯ
 async def delete_food_by_number(message: types.Message):
     user_id = message.from_user.id
     parts = message.text.split()
@@ -130,12 +131,12 @@ async def drink_amount(message: types.Message, state: FSMContext):
         return
     if message.text == "Другое":
         await state.update_data(awaiting_custom_drink_amount=True)
-        await edit_or_send(state, message.chat.id, "Введи количество (например: 0.5 л, 2 стакана):", get_back_button(), edit=True)
+        await edit_or_send(state, message.chat.id, "✏️ Введи количество (например: 0.5 л, 2 стакана, 300 мл):", get_back_button(), edit=True)
         return
     data = await state.get_data()
     if data.get("awaiting_custom_drink_amount"):
         if not message.text.strip():
-            await edit_or_send(state, message.chat.id, "❌ Введи количество напитка текстом.", get_back_button(), edit=True)
+            await edit_or_send(state, message.chat.id, "❌ Введи количество текстом.", get_back_button(), edit=True)
             return
         await state.update_data(awaiting_custom_drink_amount=False)
     drink_type = data["drink_type"]
