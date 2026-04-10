@@ -162,4 +162,69 @@ class AIAdvisor:
             "3. НЕ пиши лишних символов вроде /, *, _, `, ~, #, >.\n"
             "4. Избегай грамматических ошибок и опечаток.\n"
             "5. Отвечай по существу, давай практичные советы.\n"
-            "6. Будь живым, но не перегружай текст. Не используй смайлики в каждом предложении
+            "6. Будь живым, но не перегружай текст. Не используй смайлики в каждом предложении.\n\n"
+            f"Вот сводка по данным пользователя:\n{agg_summary}"
+        )
+
+        messages = [{"role": "system", "content": system_prompt}]
+
+        if history:
+            messages.extend(history[-10:])
+
+        messages.append({"role": "user", "content": user_question})
+
+        async with aiohttp.ClientSession() as session:
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (compatible; TelegramBot/1.0; +https://telegram.org)"
+            }
+            payload = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": 0.7,
+                "max_tokens": 1000,
+            }
+            try:
+                async with session.post(self.base_url, headers=headers, json=payload) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        content = result["choices"][0]["message"]["content"]
+                        content = content.replace('*', '').replace('_', '').replace('`', '').replace('~', '').replace('#', '').replace('>', '')
+                        return content
+                    else:
+                        error_text = await resp.text()
+                        logger.error(f"OpenRouter API error {resp.status}: {error_text}")
+                        return f"⚠️ Ошибка AI-сервиса (код {resp.status}). Попробуйте позже."
+            except Exception as e:
+                logger.error(f"OpenRouter request failed: {e}")
+                return "⚠️ Не удалось связаться с AI-сервисом. Проверьте интернет и настройки."
+
+    def _format_user_data(self, data: Dict) -> str:
+        lines = []
+        sleep = data.get("sleep", [])
+        if sleep:
+            lines.append("🛌 СОН (последние 5 записей):")
+            for s in sleep[-5:]:
+                woke = "да" if s.get('woke_night') else "нет"
+                lines.append(f"  • {s.get('date')}: лёг в {s.get('bed_time')}, встал в {s.get('wake_time')}, качество {s.get('quality')}/10")
+        else:
+            lines.append("🛌 Данные о сне отсутствуют.")
+        checkins = data.get("checkins", [])
+        if checkins:
+            lines.append("\n⚡️ ЧЕК-ИНЫ (последние 5):")
+            for c in checkins[-5:]:
+                emotions = ', '.join(c.get('emotions', [])) or 'не указаны'
+                lines.append(f"  • {c.get('date')} {c.get('time')}: энергия {c.get('energy')}/10, стресс {c.get('stress')}/10, эмоции: {emotions}")
+        else:
+            lines.append("\n⚡️ Чек-ины отсутствуют.")
+        summaries = data.get("day_summary", [])
+        if summaries:
+            lines.append("\n📝 ИТОГИ ДНЯ (последние 5):")
+            for s in summaries[-5:]:
+                lines.append(f"  • {s.get('date')}: оценка {s.get('score')}/10")
+        else:
+            lines.append("\n📝 Итоги дня отсутствуют.")
+        return "\n".join(lines)
+
+ai_advisor = None
