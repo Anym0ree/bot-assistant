@@ -67,49 +67,53 @@ async def check_custom_reminders():
             current_time = user_time.strftime("%H:%M")
             today_str = user_time.strftime("%Y-%m-%d")
 
-            # ----- СТАРЫЕ НАПОМИНАНИЯ (сон, чек-ин по расписанию, итог дня) -----
+            # ----- СОН -----
             if settings.get("sleep", {}).get("enabled", False):
                 if settings["sleep"].get("time") == current_time:
                     await bot.send_message(user_id, "🛌 Пора записать сон")
 
+            # ----- ЧЕК-ИНЫ (по расписанию) -----
             if settings.get("checkins", {}).get("enabled", False):
                 if current_time in settings["checkins"].get("times", []):
-                    # Проверяем, был ли чек-ин сегодня
                     checkins = await db._load_json(user_id, "checkins.json")
                     has_today = any(c.get("date") == today_str for c in checkins)
                     if not has_today:
                         await bot.send_message(user_id, "⚡️ Сделай чек-ин")
 
+            # ----- ИТОГ ДНЯ -----
             if settings.get("summary", {}).get("enabled", False):
                 if settings["summary"].get("time") == current_time:
                     target_date = await db.get_target_date_for_summary(user_id)
                     if target_date and not await db.has_day_summary_for_date(user_id, target_date):
                         await bot.send_message(user_id, "📝 Не забудь подвести итог дня")
 
-            # ----- НОВЫЕ УМНЫЕ НАПОМИНАНИЯ -----
-            # 1. Вода (каждые 4 часа)
-            water_times = ["10:00", "14:00", "18:00", "22:00"]
-            if current_time in water_times:
-                items = await db.get_today_food_and_drinks(user_id)
-                water_drunk = any("вода" in d['text'].lower() for d in items if d['type'] == "🥤 Напитки")
-                if not water_drunk:
-                    await bot.send_message(user_id, "💧 Не забывай пить воду! Напоминаю каждые 4 часа.")
+            # ----- ВОДА -----
+            water_settings = settings.get("water", {})
+            if water_settings.get("enabled", False):
+                if current_time in water_settings.get("times", []):
+                    items = await db.get_today_food_and_drinks(user_id)
+                    water_drunk = any("вода" in d['text'].lower() for d in items if d['type'] == "🥤 Напитки")
+                    if not water_drunk:
+                        await bot.send_message(user_id, "💧 Не забывай пить воду!")
 
-            # 2. Еда (завтрак, обед, ужин)
-            meal_times = {"09:00": "завтрак", "13:00": "обед", "19:00": "ужин"}
-            if current_time in meal_times:
-                items = await db.get_today_food_and_drinks(user_id)
-                meal = meal_times[current_time]
-                has_meal = any(meal in f['text'].lower() for f in items if f['type'] == "🍽 Еда")
-                if not has_meal:
-                    await bot.send_message(user_id, f"🍽 Пора {meal}! Добавь запись о еде.")
+            # ----- ЕДА (завтрак, обед, ужин) -----
+            meals_settings = settings.get("meals", {})
+            if meals_settings.get("enabled", False):
+                meal_times = meals_settings.get("times", [])
+                if current_time in meal_times:
+                    # Определяем название приёма по времени
+                    meal_names = {"09:00": "завтрак", "13:00": "обед", "19:00": "ужин"}
+                    meal_name = meal_names.get(current_time, "приём пищи")
+                    items = await db.get_today_food_and_drinks(user_id)
+                    has_meal = any(meal_name in f['text'].lower() for f in items if f['type'] == "🍽 Еда")
+                    if not has_meal:
+                        await bot.send_message(user_id, f"🍽 Пора {meal_name}! Добавь запись о еде.")
 
-            # 3. Давно не было чек-ина (если прошло >6 часов, и сегодня не было)
+            # ----- ДАВНО НЕ БЫЛО ЧЕК-ИНА (если прошло >6 часов) -----
             checkins = await db._load_json(user_id, "checkins.json")
             if checkins:
                 last_checkin = checkins[-1]
                 last_time = datetime.strptime(f"{last_checkin['date']} {last_checkin['time']}", "%Y-%m-%d %H:%M")
-                # Приводим к UTC пользователя
                 last_time = last_time - timedelta(hours=tz)
                 hours_since = (user_time - last_time).total_seconds() / 3600
                 if hours_since > 6 and not any(c.get("date") == today_str for c in checkins):
