@@ -131,7 +131,43 @@ async def on_shutdown_polling(dp):
             await db.close()
     except Exception as e:
         logging.error(f"Ошибка при закрытии БД: {e}")
+# ========== ИНЛАЙН-РЕЖИМ (быстрое добавление еды/напитков) ==========
+from aiogram.types import InlineQueryResultArticle, InputTextMessageContent
 
+@dp.inline_handler()
+async def inline_add_food_drink(inline_query: types.InlineQuery):
+    query = inline_query.query.strip()
+    if not query:
+        return
+
+    parts = query.split(maxsplit=2)
+    if len(parts) < 2:
+        return
+
+    action = parts[0].lower()
+    text = parts[1]
+
+    user_id = inline_query.from_user.id
+
+    if action == "еда":
+        meal_type = "🍎 Перекус"  # можно улучшить: определять по времени
+        await db.add_food(user_id, meal_type, text)
+        result_text = f"✅ Добавлено: {meal_type} — {text}"
+    elif action == "напиток":
+        amount = parts[2] if len(parts) > 2 else "1 порция"
+        await db.add_drink(user_id, text, amount)
+        result_text = f"✅ Добавлено: {text} — {amount}"
+    else:
+        return
+
+    article = InlineQueryResultArticle(
+        id="1",
+        title=f"Добавить {action}",
+        description=text,
+        input_message_content=InputTextMessageContent(result_text)
+    )
+    await inline_query.answer([article], cache_time=1)
+    
 if __name__ == "__main__":
     load_plugins(dp)
     executor.start_polling(dp, on_startup=on_startup_polling, on_shutdown=on_shutdown_polling, skip_updates=True)
