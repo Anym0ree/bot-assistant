@@ -132,14 +132,7 @@ async def check_reminders():
     except Exception as e:
         logging.error(f"Ошибка в check_reminders: {e}", exc_info=True)
         
-async def check_reminders():
-    due_reminders = await db.get_reminders_due_now()
-    for user_id, reminder in due_reminders:
-        try:
-            await bot.send_message(user_id, f"⏰ НАПОМИНАНИЕ!\n\n{reminder['text']}")
-            await db.mark_reminder_sent(user_id, reminder["id"])
-        except Exception as e:
-            logging.error(f"Ошибка отправки напоминания {reminder['id']}: {e}")
+
 
 # ========== ЗАПУСК ==========
 async def on_startup_polling(dp):
