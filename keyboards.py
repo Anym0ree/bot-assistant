@@ -288,3 +288,11 @@ def get_converter_formats_keyboard():
                [KeyboardButton(text="MP3"), KeyboardButton(text="WEBM")],
                [KeyboardButton(text="⬅️ Назад")]]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+def get_sleep_quality_buttons():
+    buttons = [
+        [KeyboardButton(text="😴 Плохо"), KeyboardButton(text="🙂 Нормально")],
+        [KeyboardButton(text="😊 Супер"), KeyboardButton(text="✍️ Свой вариант")],
+        [KeyboardButton(text="⬅️ Назад"), KeyboardButton(text="❌ Отмена")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
