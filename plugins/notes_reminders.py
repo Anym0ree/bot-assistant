@@ -195,28 +195,37 @@ async def reminder_advance(message: types.Message, state: FSMContext):
             await send_temp_message(message.chat.id, "❌ Нельзя создать напоминание на прошедшее или слишком близкое время.", 3)
             await message.answer("Главное меню", reply_markup=get_main_menu())
             return
+
+        # Создаём основное напоминание
+        main_id = await db.add_reminder(message.from_user.id, text, target_date, time_str, advance_type=None, remind_utc=target_utc)
+        if not main_id:
+            await send_temp_message(message.chat.id, "❌ Не удалось создать напоминание.", 3)
+            await safe_finish(state, message)
+            return
+
+        # Дополнительное напоминание, если нужно
         if advance_type:
             if advance_type == "day":
-                adv_dt = target_utc - timedelta(days=1)
+                adv_utc = target_utc - timedelta(days=1)
             elif advance_type == "3h":
-                adv_dt = target_utc - timedelta(hours=3)
+                adv_utc = target_utc - timedelta(hours=3)
             elif advance_type == "1h":
-                adv_dt = target_utc - timedelta(hours=1)
+                adv_utc = target_utc - timedelta(hours=1)
             else:
-                adv_dt = None
-            if adv_dt and adv_dt < now_utc + MIN_DELTA:
+                adv_utc = None
+            if adv_utc and adv_utc < now_utc + MIN_DELTA:
+                await db.delete_reminder(message.from_user.id, main_id)  # откатываем
                 await edit_or_send(state, message.chat.id, "❌ Выбранное доп.напоминание попадает в прошлое или слишком близко — выбери другой вариант.", get_reminder_advance_buttons(), edit=True)
                 return
+            adv_text = f"🔔 Напоминание: {text}"
+            await db.add_reminder(message.from_user.id, adv_text, target_date, time_str, advance_type=advance_type, parent_id=main_id, is_custom=False, remind_utc=adv_utc)
 
-        reminder_id = await db.add_reminder(message.from_user.id, text, target_date, time_str, advance_type)
         await delete_dialog_message(state)
         await state.finish()
-        if reminder_id is None:
-            await send_temp_message(message.chat.id, "❌ Нельзя создать напоминание на прошедшее время.", 3)
-        else:
-            await send_temp_message(message.chat.id, f"✅ Напоминание добавлено!\n\n📝 {text}\n🕐 {target_date} {time_str}", 4)
+        await send_temp_message(message.chat.id, f"✅ Напоминание добавлено!\n\n📝 {text}\n🕐 {target_date} {time_str}", 4)
         await message.answer("Главное меню", reply_markup=get_main_menu())
     except Exception as e:
+        logging.error(f"Ошибка создания напоминания: {e}")
         await edit_or_send(state, message.chat.id, "❌ Ошибка в дате/времени. Попробуй снова.", get_notes_reminders_main_menu(), edit=False)
         await state.finish()
 
@@ -244,35 +253,45 @@ async def reminder_custom_time(message: types.Message, state: FSMContext):
         user_tz_offset = 3
 
     try:
+        # Время основного напоминания
+        time_str = f"{data['hour']:02d}:{data['minute']}"
+        target_local = datetime.strptime(f"{target_date} {time_str}", "%Y-%m-%d %H:%M")
+        target_utc = target_local - timedelta(hours=user_tz_offset)
+        # Время дополнительного
         custom_local = datetime.strptime(f"{target_date} {custom_time}", "%Y-%m-%d %H:%M")
         custom_utc = custom_local - timedelta(hours=user_tz_offset)
         now_utc = datetime.utcnow()
+
+        if target_utc < now_utc + MIN_DELTA:
+            await send_temp_message(message.chat.id, "❌ Основное напоминание слишком близко или уже прошло.", 3)
+            await safe_finish(state, message)
+            return
         if custom_utc < now_utc + MIN_DELTA:
-            await send_temp_message(message.chat.id, f"❌ Доп. напоминание не может быть раньше, чем через {int(MIN_DELTA.total_seconds()//60)} минут от текущего момента.", 3)
+            await send_temp_message(message.chat.id, f"❌ Доп. напоминание не может быть раньше, чем через {int(MIN_DELTA.total_seconds()//60)} минут.", 3)
             await edit_or_send(state, message.chat.id, "✏️ Введи другое время:", get_back_button(), edit=True)
             return
+
+        # Создаём основное напоминание
+        main_id = await db.add_reminder(message.from_user.id, data['text'], target_date, time_str, advance_type=None, remind_utc=target_utc)
+        if not main_id:
+            await send_temp_message(message.chat.id, "❌ Не удалось создать основное напоминание.", 3)
+            await safe_finish(state, message)
+            return
+
+        # Создаём дополнительное
+        adv_text = f"🔔 Напоминание: {data['text']}"
+        await db.add_reminder(message.from_user.id, adv_text, target_date, custom_time, advance_type="custom", parent_id=main_id, is_custom=True, remind_utc=custom_utc)
+
+        await delete_dialog_message(state)
+        await state.finish()
+        await send_temp_message(message.chat.id, f"✅ Напоминание добавлено!\n\n📝 {data['text']}\n🕐 {target_date} {time_str}\n🔔 Доп. напоминание: {target_date} {custom_time}", 4)
+        await message.answer("Главное меню", reply_markup=get_main_menu())
     except Exception as e:
+        logging.error(f"Ошибка custom напоминания: {e}")
         await send_temp_message(message.chat.id, "❌ Ошибка даты/времени.", 3)
         await ReminderStates.advance.set()
         await edit_or_send(state, message.chat.id, "⏰ Выбери вариант доп. напоминания:", get_reminder_advance_buttons(), edit=True)
-        return
-
-    await state.update_data(custom_time=custom_time)
-    text = data['text']
-    target_date_str = data['date']
-    time_str = f"{data['hour']:02d}:{data['minute']}"
-    main_id = await db.add_reminder(message.from_user.id, text, target_date_str, time_str, advance_type=None)
-    if not main_id:
-        await send_temp_message(message.chat.id, "❌ Не удалось создать напоминание.", 3)
-        await safe_finish(state, message)
-        return
-    adv_text = f"🔔 Напоминание: {text}"
-    await db.add_reminder(message.from_user.id, adv_text, target_date_str, custom_time, advance_type=None, parent_id=main_id, is_custom=True)
-    await delete_dialog_message(state)
-    await state.finish()
-    await send_temp_message(message.chat.id, f"✅ Напоминание добавлено!\n\n📝 {text}\n🕐 {target_date_str} {time_str}\n🔔 Доп. напоминание: {target_date_str} {custom_time}", 4)
-    await message.answer("Главное меню", reply_markup=get_main_menu())
-
+        
 async def view_records(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("Что хочешь посмотреть?", reply_markup=get_view_type_buttons())
