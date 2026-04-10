@@ -32,8 +32,7 @@ async def food_drink_menu(message: types.Message):
         f"Выбери действие:\n"
         f"➕ Добавить еду/напитки\n"
         f"📋 Посмотреть сегодня\n\n"
-        f"💡 *Быстрое добавление в любом чате:*\n"
-        f"Напиши `@{bot_username} еда пицца` или `@{bot_username} напиток вода 500 мл`\n\n"
+        
         f"⬅️ Назад",
         reply_markup=get_food_drink_menu(),
         parse_mode="Markdown"
