@@ -5,7 +5,7 @@ from keyboards import get_timezone_buttons, get_main_menu, get_back_button
 from database_pg import db
 from states import TimezoneStates, ReminderSetupStates
 from utils import edit_or_send, delete_dialog_message, send_temp_message, safe_finish
-from reminder_utils import save_reminder_settings, get_default_reminders
+from reminder_utils import save_reminder_settings, get_default_reminders, load_reminder_settings
 import re
 
 CITY_TO_OFFSET = {
@@ -62,11 +62,19 @@ async def timezone_city(message: types.Message, state: FSMContext):
         await db.set_user_timezone(message.from_user.id, CITY_TO_OFFSET[message.text])
         await delete_dialog_message(state)
         await state.finish()
-        await message.answer(
-            "✅ Часовой пояс сохранён.\n\n🔔 Хочешь включить напоминания?",
-            reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("✅ Да", "❌ Нет")
-        )
-        await ReminderSetupStates.ask.set()
+
+        # Проверяем, есть ли уже настройки напоминаний
+        existing_settings = load_reminder_settings(message.from_user.id)
+        if existing_settings is None:
+            # Нет настроек -> спрашиваем
+            await message.answer(
+                "✅ Часовой пояс сохранён.\n\n🔔 Хочешь включить напоминания?",
+                reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("✅ Да", "❌ Нет")
+            )
+            await ReminderSetupStates.ask.set()
+        else:
+            # Настройки уже есть, просто показываем меню
+            await message.answer("✅ Часовой пояс обновлён.", reply_markup=get_main_menu())
         return
     await message.answer("Выбери город из кнопок или нажми «Другое».", reply_markup=get_timezone_buttons())
 
@@ -89,11 +97,16 @@ async def timezone_offset(message: types.Message, state: FSMContext):
     await db.set_user_timezone(message.from_user.id, offset)
     await delete_dialog_message(state)
     await state.finish()
-    await message.answer(
-        "✅ Часовой пояс сохранён.\n\n🔔 Хочешь включить напоминания?",
-        reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("✅ Да", "❌ Нет")
-    )
-    await ReminderSetupStates.ask.set()
+
+    existing_settings = load_reminder_settings(message.from_user.id)
+    if existing_settings is None:
+        await message.answer(
+            "✅ Часовой пояс сохранён.\n\n🔔 Хочешь включить напоминания?",
+            reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("✅ Да", "❌ Нет")
+        )
+        await ReminderSetupStates.ask.set()
+    else:
+        await message.answer("✅ Часовой пояс обновлён.", reply_markup=get_main_menu())
 
 async def reminder_setup_ask(message: types.Message, state: FSMContext):
     if message.text == "❌ Нет":
