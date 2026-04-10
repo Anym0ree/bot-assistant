@@ -248,7 +248,6 @@ class Database:
             return result != "DELETE 0"
 
     async def add_reminder(self, user_id, text, target_date, target_time, advance_type=None, parent_id=None, is_custom=False, remind_utc=None):
-        # Если remind_utc не передан, вычисляем по local времени пользователя
         if remind_utc is None:
             local_dt = await self.get_user_local_datetime(user_id)
             target_local = datetime.strptime(f"{target_date} {target_time}", "%Y-%m-%d %H:%M")
