@@ -14,7 +14,7 @@ async def day_summary_start(message: types.Message, state: FSMContext):
         await send_temp_message(message.chat.id, f"📝 Итог за {target_date} уже сохранён.", 4)
         return
     await DaySummaryStates.score.set()
-    await edit_or_send(state, message.chat.id, "Как прошёл день? Оценка от 1 до 10:", get_energy_stress_buttons(), edit=False)
+    await edit_or_send(state, message.chat.id, "📊 Насколько ты доволен сегодняшним днём? (1 — ужасно, 10 — великолепно)", get_energy_stress_buttons(), edit=False)
 
 async def summary_score(message: types.Message, state: FSMContext):
     if message.text in ("❌ Отмена", "⬅️ Назад"):
@@ -25,7 +25,7 @@ async def summary_score(message: types.Message, state: FSMContext):
         return
     await state.update_data(score=int(message.text))
     await DaySummaryStates.best.set()
-    await edit_or_send(state, message.chat.id, "Что было лучшим за день?", get_skip_markup_text(), edit=True)
+    await edit_or_send(state, message.chat.id, "🌟 Какое событие или момент сегодня порадовали больше всего?", get_skip_markup_text(), edit=True)
 
 async def summary_best(message: types.Message, state: FSMContext):
     if message.text in ("❌ Отмена", "⬅️ Назад"):
@@ -34,7 +34,7 @@ async def summary_best(message: types.Message, state: FSMContext):
     best = message.text if message.text != "Пропустить" else ""
     await state.update_data(best=best)
     await DaySummaryStates.worst.set()
-    await edit_or_send(state, message.chat.id, "Что было самым сложным?", get_skip_markup_text(), edit=True)
+    await edit_or_send(state, message.chat.id, "⚠️ С чем пришлось столкнуться? Что далось труднее всего?", get_skip_markup_text(), edit=True)
 
 async def summary_worst(message: types.Message, state: FSMContext):
     if message.text in ("❌ Отмена", "⬅️ Назад"):
@@ -43,7 +43,7 @@ async def summary_worst(message: types.Message, state: FSMContext):
     worst = message.text if message.text != "Пропустить" else ""
     await state.update_data(worst=worst)
     await DaySummaryStates.gratitude.set()
-    await edit_or_send(state, message.chat.id, "За что благодарен?", get_skip_markup_text(), edit=True)
+    await edit_or_send(state, message.chat.id, "🙏 За что ты благодарен этому дню? (даже маленькая радость)", get_skip_markup_text(), edit=True)
 
 async def summary_gratitude(message: types.Message, state: FSMContext):
     if message.text in ("❌ Отмена", "⬅️ Назад"):
@@ -52,7 +52,7 @@ async def summary_gratitude(message: types.Message, state: FSMContext):
     gratitude = message.text if message.text != "Пропустить" else ""
     await state.update_data(gratitude=gratitude)
     await DaySummaryStates.note.set()
-    await edit_or_send(state, message.chat.id, "Заметка? (можно пропустить)", get_skip_markup_text(), edit=True)
+    await edit_or_send(state, message.chat.id, "📝 Хочешь добавить что-то ещё? (любые мысли, выводы, идеи)", get_skip_markup_text(), edit=True)
 
 async def summary_note(message: types.Message, state: FSMContext):
     if message.text in ("❌ Отмена", "⬅️ Назад"):
