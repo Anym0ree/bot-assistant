@@ -5,8 +5,8 @@ from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
 from database_pg import db
 from states import TimezoneStates, ReminderCustomizeStates
-from keyboards import get_settings_menu_no_reset, get_timezone_buttons, get_main_menu, get_back_button
-from utils import edit_or_send, send_temp_message, safe_finish, is_valid_time_text
+from keyboards import get_settings_menu_no_reset, get_timezone_buttons, get_main_menu
+from utils import send_temp_message, is_valid_time_text
 from reminder_utils import load_reminder_settings, save_reminder_settings, get_default_reminders
 
 REMINDER_FILE = "reminder_settings.json"
@@ -90,7 +90,7 @@ async def reminder_customize_choose(message: types.Message, state: FSMContext):
     else:
         await message.answer("Выбери из кнопок.")
 
-# ========== МЕНЮ НАСТРОЕК СНА ==========
+# ========== НАСТРОЙКИ СНА ==========
 async def sleep_menu_action(message: types.Message, state: FSMContext):
     settings_data = load_reminder_settings(message.from_user.id)
     if not settings_data:
@@ -136,7 +136,7 @@ async def change_sleep_time(message: types.Message, state: FSMContext):
     await state.finish()
     await reminder_settings_menu(message)
 
-# ========== МЕНЮ НАСТРОЕК ЧЕК-ИНОВ ==========
+# ========== НАСТРОЙКИ ЧЕК-ИНОВ ==========
 async def checkins_menu_action(message: types.Message, state: FSMContext):
     settings_data = load_reminder_settings(message.from_user.id)
     if not settings_data:
@@ -188,7 +188,7 @@ async def change_checkins_times(message: types.Message, state: FSMContext):
     await state.finish()
     await reminder_settings_menu(message)
 
-# ========== МЕНЮ НАСТРОЕК ИТОГА ДНЯ ==========
+# ========== НАСТРОЙКИ ИТОГА ДНЯ ==========
 async def summary_menu_action(message: types.Message, state: FSMContext):
     settings_data = load_reminder_settings(message.from_user.id)
     if not settings_data:
