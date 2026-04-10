@@ -3,6 +3,7 @@ from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
 from database_pg import db
 from keyboards import get_main_menu
+import json
 
 async def get_user_data_for_date(user_id: int, date_str: str):
     result = {}
@@ -18,12 +19,12 @@ async def get_user_data_for_date(user_id: int, date_str: str):
         )
         result['checkin'] = dict(checkin) if checkin else None
         food_rows = await conn.fetch(
-            "SELECT time, meal_type, food_text FROM food WHERE user_id = $1 AND date = $2 ORDER BY time",
+            "SELECT id, time, meal_type, food_text FROM food WHERE user_id = $1 AND date = $2 ORDER BY time",
             user_id, date_str
         )
         result['food'] = [dict(r) for r in food_rows]
         drink_rows = await conn.fetch(
-            "SELECT time, drink_type, amount FROM drinks WHERE user_id = $1 AND date = $2 ORDER BY time",
+            "SELECT id, time, drink_type, amount FROM drinks WHERE user_id = $1 AND date = $2 ORDER BY time",
             user_id, date_str
         )
         result['drinks'] = [dict(r) for r in drink_rows]
@@ -41,62 +42,92 @@ async def get_user_data_for_date(user_id: int, date_str: str):
 
 def format_user_data(data: dict, date_str: str) -> str:
     text = f"📅 *{date_str}*\n\n"
+    text += "🛌 *Сон*:\n"
     if data['sleep']:
         s = data['sleep']
         woke_night = "Да" if s['woke_night'] else "Нет"
-        text += f"🛌 *Сон*: лёг в {s['bed_time']}, встал в {s['wake_time']}, качество {s['quality']}/10, просыпался ночью: {woke_night}\n"
+        text += f"   • Лег: {s['bed_time']}, встал: {s['wake_time']}\n"
+        text += f"   • Качество: {s['quality']}/10, просыпался ночью: {woke_night}\n"
         if s['note']:
-            text += f"   📝 {s['note']}\n"
+            text += f"   • Заметка: {s['note']}\n"
     else:
-        text += "🛌 *Сон*: не записан\n"
+        text += "   • Нет записи\n"
+
+    text += "\n⚡️ *Чек-ин*:\n"
     if data['checkin']:
         c = data['checkin']
         emotions = c['emotions']
         if emotions:
             try:
-                import json
-                emotions = json.loads(emotions)
-                emotions = ", ".join(emotions)
+                emotions_list = json.loads(emotions)
+                emotions = ", ".join(emotions_list)
             except:
-                emotions = str(emotions)
+                pass
         else:
             emotions = "не указаны"
-        text += f"⚡️ *Чек-ин*: энергия {c['energy']}/10, стресс {c['stress']}/10, эмоции: {emotions}\n"
+        text += f"   • Время: {c['time']}\n"
+        text += f"   • Энергия: {c['energy']}/10, стресс: {c['stress']}/10\n"
+        text += f"   • Эмоции: {emotions}\n"
         if c['note']:
-            text += f"   📝 {c['note']}\n"
+            text += f"   • Заметка: {c['note']}\n"
     else:
-        text += "⚡️ *Чек-ин*: не записан\n"
+        text += "   • Нет записи\n"
+
+    text += "\n🍽 *Еда*:\n"
     if data['food']:
-        text += "🍽 *Еда*:\n"
-        for f in data['food']:
-            text += f"   🕐 {f['time']} — {f['meal_type']}: {f['food_text']}\n"
+        for idx, f in enumerate(data['food'], start=1):
+            text += f"   {idx}. 🕐 {f['time']} — {f['meal_type']}: {f['food_text']}\n"
     else:
-        text += "🍽 *Еда*: нет записей\n"
+        text += "   • Нет записей\n"
+
+    text += "\n🥤 *Напитки*:\n"
     if data['drinks']:
-        text += "🥤 *Напитки*:\n"
-        for d in data['drinks']:
-            text += f"   🕐 {d['time']} — {d['drink_type']}: {d['amount']}\n"
+        for idx, d in enumerate(data['drinks'], start=1):
+            text += f"   {idx}. 🕐 {d['time']} — {d['drink_type']}: {d['amount']}\n"
     else:
-        text += "🥤 *Напитки*: нет записей\n"
+        text += "   • Нет записей\n"
+
+    text += "\n📝 *Итог дня*:\n"
     if data['summary']:
         s = data['summary']
-        text += f"📝 *Итог дня*: оценка {s['score']}/10\n"
+        text += f"   • Оценка: {s['score']}/10\n"
         if s['best']:
-            text += f"   🌟 Лучшее: {s['best']}\n"
+            text += f"   • Лучшее: {s['best']}\n"
         if s['worst']:
-            text += f"   😟 Сложное: {s['worst']}\n"
+            text += f"   • Сложное: {s['worst']}\n"
         if s['gratitude']:
-            text += f"   🙏 Благодарность: {s['gratitude']}\n"
+            text += f"   • Благодарность: {s['gratitude']}\n"
         if s['note']:
-            text += f"   📝 {s['note']}\n"
+            text += f"   • Заметка: {s['note']}\n"
     else:
-        text += "📝 *Итог дня*: не подведён\n"
+        text += "   • Нет записи\n"
+
+    text += "\n📋 *Заметки*:\n"
     if data['notes']:
-        text += "📋 *Заметки*:\n"
-        for n in data['notes']:
-            text += f"   🕐 {n['time']}: {n['text']}\n"
+        for idx, n in enumerate(data['notes'], start=1):
+            text += f"   {idx}. 🕐 {n['time']}: {n['text']}\n"
     else:
-        text += "📋 *Заметки*: нет\n"
+        text += "   • Нет заметок\n"
+
+    # Добавляем инструкцию по редактированию
+    text += "\n━━━━━━━━━━━━━━━━━━━━\n"
+    text += "✏️ *Редактирование:*\n"
+    if data['food']:
+        text += "   • `редактировать еду <номер>` – изменить запись о еде\n"
+    if data['drinks']:
+        text += "   • `редактировать напиток <номер>` – изменить запись о напитке\n"
+    if data['sleep']:
+        text += "   • `редактировать сон <номер>` – изменить сон (номер из списка всех снов)\n"
+    if data['checkin']:
+        text += "   • `редактировать чек-ин <номер>` – изменить чек-ин\n"
+    if data['summary']:
+        text += "   • `редактировать итог <номер>` – изменить итог дня\n"
+    text += "\n📌 *Номера для сна, чек-ина, итога дня можно посмотреть командами:*\n"
+    text += "   • `мои сны` – список всех записей сна\n"
+    text += "   • `мои чек-ины` – список всех чек-инов\n"
+    text += "   • `мои итоги` – список всех итогов дня\n"
+    text += "\n*Пример:* `редактировать еду 2` или `редактировать сон 1`"
+
     return text
 
 async def history_start(message: types.Message):
@@ -158,6 +189,56 @@ async def show_history(message: types.Message, date_str: str):
 async def back_to_main(message: types.Message):
     await message.answer("Главное меню", reply_markup=get_main_menu())
 
+# ========== КОМАНДЫ ДЛЯ ПРОСМОТРА ВСЕХ ЗАПИСЕЙ ==========
+async def list_all_sleep(message: types.Message):
+    user_id = message.from_user.id
+    async with db.pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, date, bed_time, wake_time, quality FROM sleep WHERE user_id = $1 ORDER BY date DESC",
+            user_id
+        )
+    if not rows:
+        await message.answer("📋 У тебя пока нет записей о сне.")
+        return
+    text = "📋 *Все записи сна:*\n\n"
+    for idx, row in enumerate(rows, start=1):
+        text += f"{idx}. {row['date']}: лёг в {row['bed_time']}, встал в {row['wake_time']}, качество {row['quality']}/10\n"
+    text += "\n✏️ *Редактирование:* `редактировать сон <номер>`\nПример: `редактировать сон 2`"
+    await message.answer(text, parse_mode="Markdown")
+
+async def list_all_checkins(message: types.Message):
+    user_id = message.from_user.id
+    async with db.pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, date, time, energy, stress FROM checkins WHERE user_id = $1 ORDER BY date DESC, time DESC",
+            user_id
+        )
+    if not rows:
+        await message.answer("📋 У тебя пока нет чек-инов.")
+        return
+    text = "📋 *Все чек-ины:*\n\n"
+    for idx, row in enumerate(rows, start=1):
+        text += f"{idx}. {row['date']} {row['time']}: энергия {row['energy']}/10, стресс {row['stress']}/10\n"
+    text += "\n✏️ *Редактирование:* `редактировать чек-ин <номер>`\nПример: `редактировать чек-ин 2`"
+    await message.answer(text, parse_mode="Markdown")
+
+async def list_all_summaries(message: types.Message):
+    user_id = message.from_user.id
+    async with db.pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, date, score FROM day_summary WHERE user_id = $1 ORDER BY date DESC",
+            user_id
+        )
+    if not rows:
+        await message.answer("📋 У тебя пока нет итогов дня.")
+        return
+    text = "📋 *Все итоги дня:*\n\n"
+    for idx, row in enumerate(rows, start=1):
+        text += f"{idx}. {row['date']}: оценка {row['score']}/10\n"
+    text += "\n✏️ *Редактирование:* `редактировать итог <номер>`\nПример: `редактировать итог 2`"
+    await message.answer(text, parse_mode="Markdown")
+
+# ========== РЕГИСТРАЦИЯ ==========
 def register(dp: Dispatcher):
     dp.register_message_handler(history_start, text="📅 История", state="*")
     dp.register_message_handler(history_today, text="📅 Сегодня", state="*")
@@ -165,3 +246,6 @@ def register(dp: Dispatcher):
     dp.register_message_handler(history_ask_date, text="✏️ Ввести дату", state="*")
     dp.register_message_handler(history_process_date, state="waiting_for_history_date")
     dp.register_message_handler(back_to_main, text="⬅️ Назад", state="*")
+    dp.register_message_handler(list_all_sleep, commands=['мои сны'], state='*')
+    dp.register_message_handler(list_all_checkins, commands=['мои чек-ины'], state='*')
+    dp.register_message_handler(list_all_summaries, commands=['мои итоги'], state='*')
