@@ -25,7 +25,19 @@ async def handle_add_another(message: types.Message, state: FSMContext):
 
 # ========== ОСНОВНЫЕ ОБРАБОТЧИКИ ==========
 async def food_drink_menu(message: types.Message):
-    await message.answer("🍽🥤 Еда и напитки\n\nВыбери действие:", reply_markup=get_food_drink_menu())
+    # Получаем имя бота для подсказки
+    bot_username = (await message.bot.get_me()).username
+    await message.answer(
+        f"🍽🥤 Еда и напитки\n\n"
+        f"Выбери действие:\n"
+        f"➕ Добавить еду/напитки\n"
+        f"📋 Посмотреть сегодня\n\n"
+        f"💡 *Быстрое добавление в любом чате:*\n"
+        f"Напиши `@{bot_username} еда пицца` или `@{bot_username} напиток вода 500 мл`\n\n"
+        f"⬅️ Назад",
+        reply_markup=get_food_drink_menu(),
+        parse_mode="Markdown"
+    )
 
 async def add_food_drink_start(message: types.Message, state: FSMContext):
     await FoodDrinkStates.type.set()
