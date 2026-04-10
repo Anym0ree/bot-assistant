@@ -98,3 +98,7 @@ class EditFoodStates(StatesGroup):
 
 class EditDrinkStates(StatesGroup):
     waiting = State()
+class ProfileStates(StatesGroup):
+    age = State()
+    height = State()
+    weight = State()
