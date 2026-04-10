@@ -27,7 +27,8 @@ async def change_city(message: types.Message):
 async def reminder_settings_menu(message: types.Message):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add("🛌 Сон", "⚡️ Чек-ины")
-    kb.add("📝 Итог дня", "⬅️ Назад")
+    kb.add("📝 Итог дня", "💧 Вода")
+    kb.add("🍽 Еда", "⬅️ Назад")
     await message.answer("🔔 Выбери, для чего настроить напоминания:", reply_markup=kb)
     await ReminderCustomizeStates.waiting.set()
 
@@ -87,10 +88,42 @@ async def reminder_customize_choose(message: types.Message, state: FSMContext):
         )
         await state.set_state(ReminderCustomizeStates.summary_menu)
 
+    elif message.text == "💧 Вода":
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        current_enabled = settings_data.get("water", get_default_reminders()["water"])["enabled"]
+        kb.add("✅ Включить" if not current_enabled else "❌ Выключить")
+        kb.add("🕐 Изменить время")
+        kb.add("⬅️ Назад")
+        times_str = ", ".join(settings_data.get("water", get_default_reminders()["water"])["times"])
+        await message.answer(
+            f"💧 Напоминания о воде:\n"
+            f"Состояние: {'✅ Включено' if current_enabled else '❌ Выключено'}\n"
+            f"Время: {times_str}\n\n"
+            f"Что сделать?",
+            reply_markup=kb
+        )
+        await state.set_state(ReminderCustomizeStates.water_menu)
+
+    elif message.text == "🍽 Еда":
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        current_enabled = settings_data.get("meals", get_default_reminders()["meals"])["enabled"]
+        kb.add("✅ Включить" if not current_enabled else "❌ Выключить")
+        kb.add("🕐 Изменить время")
+        kb.add("⬅️ Назад")
+        times_str = ", ".join(settings_data.get("meals", get_default_reminders()["meals"])["times"])
+        await message.answer(
+            f"🍽 Напоминания о приёмах пищи:\n"
+            f"Состояние: {'✅ Включено' if current_enabled else '❌ Выключено'}\n"
+            f"Время: {times_str}\n\n"
+            f"Что сделать?",
+            reply_markup=kb
+        )
+        await state.set_state(ReminderCustomizeStates.meals_menu)
+
     else:
         await message.answer("Выбери из кнопок.")
 
-# ========== НАСТРОЙКИ СНА ==========
+# ----- НАСТРОЙКИ СНА (без изменений) -----
 async def sleep_menu_action(message: types.Message, state: FSMContext):
     settings_data = load_reminder_settings(message.from_user.id)
     if not settings_data:
@@ -136,7 +169,7 @@ async def change_sleep_time(message: types.Message, state: FSMContext):
     await state.finish()
     await reminder_settings_menu(message)
 
-# ========== НАСТРОЙКИ ЧЕК-ИНОВ ==========
+# ----- НАСТРОЙКИ ЧЕК-ИНОВ (без изменений) -----
 async def checkins_menu_action(message: types.Message, state: FSMContext):
     settings_data = load_reminder_settings(message.from_user.id)
     if not settings_data:
@@ -188,7 +221,7 @@ async def change_checkins_times(message: types.Message, state: FSMContext):
     await state.finish()
     await reminder_settings_menu(message)
 
-# ========== НАСТРОЙКИ ИТОГА ДНЯ ==========
+# ----- НАСТРОЙКИ ИТОГА ДНЯ (без изменений) -----
 async def summary_menu_action(message: types.Message, state: FSMContext):
     settings_data = load_reminder_settings(message.from_user.id)
     if not settings_data:
@@ -234,7 +267,119 @@ async def change_summary_time(message: types.Message, state: FSMContext):
     await state.finish()
     await reminder_settings_menu(message)
 
-# ========== РЕГИСТРАЦИЯ ==========
+# ----- НАСТРОЙКИ ВОДЫ -----
+async def water_menu_action(message: types.Message, state: FSMContext):
+    settings_data = load_reminder_settings(message.from_user.id)
+    if not settings_data:
+        settings_data = get_default_reminders()
+    if "water" not in settings_data:
+        settings_data["water"] = get_default_reminders()["water"]
+
+    if message.text == "✅ Включить":
+        settings_data["water"]["enabled"] = True
+        save_reminder_settings(message.from_user.id, settings_data)
+        await message.answer("✅ Напоминания о воде включены.")
+        await state.finish()
+        await reminder_settings_menu(message)
+    elif message.text == "❌ Выключить":
+        settings_data["water"]["enabled"] = False
+        save_reminder_settings(message.from_user.id, settings_data)
+        await message.answer("❌ Напоминания о воде выключены.")
+        await state.finish()
+        await reminder_settings_menu(message)
+    elif message.text == "🕐 Изменить время":
+        await message.answer("🕐 Введи время для напоминаний о воде в формате ЧЧ:ММ через запятую или пробел.\nНапример: 10:00, 14:00, 18:00, 22:00\n\nИли нажми «Назад».")
+        await state.set_state(ReminderCustomizeStates.change_water_times)
+    elif message.text == "⬅️ Назад":
+        await state.finish()
+        await reminder_settings_menu(message)
+    else:
+        await message.answer("Выбери действие из кнопок.")
+
+async def change_water_times(message: types.Message, state: FSMContext):
+    if message.text == "⬅️ Назад":
+        await state.finish()
+        await reminder_settings_menu(message)
+        return
+
+    parts = re.split(r'[ ,;]+', message.text)
+    times = []
+    for part in parts:
+        if is_valid_time_text(part.strip()):
+            times.append(part.strip())
+    if not times:
+        await message.answer("❌ Не удалось распознать время. Введи время в формате ЧЧ:ММ через запятую или пробел.\nИли нажми «Назад».")
+        return
+
+    times = sorted(set(times))
+    settings_data = load_reminder_settings(message.from_user.id)
+    if not settings_data:
+        settings_data = get_default_reminders()
+    if "water" not in settings_data:
+        settings_data["water"] = get_default_reminders()["water"]
+    settings_data["water"]["times"] = times
+    save_reminder_settings(message.from_user.id, settings_data)
+    await message.answer(f"✅ Время напоминаний о воде изменено: {', '.join(times)}.")
+    await state.finish()
+    await reminder_settings_menu(message)
+
+# ----- НАСТРОЙКИ ЕДЫ (приёмы пищи) -----
+async def meals_menu_action(message: types.Message, state: FSMContext):
+    settings_data = load_reminder_settings(message.from_user.id)
+    if not settings_data:
+        settings_data = get_default_reminders()
+    if "meals" not in settings_data:
+        settings_data["meals"] = get_default_reminders()["meals"]
+
+    if message.text == "✅ Включить":
+        settings_data["meals"]["enabled"] = True
+        save_reminder_settings(message.from_user.id, settings_data)
+        await message.answer("✅ Напоминания о приёмах пищи включены.")
+        await state.finish()
+        await reminder_settings_menu(message)
+    elif message.text == "❌ Выключить":
+        settings_data["meals"]["enabled"] = False
+        save_reminder_settings(message.from_user.id, settings_data)
+        await message.answer("❌ Напоминания о приёмах пищи выключены.")
+        await state.finish()
+        await reminder_settings_menu(message)
+    elif message.text == "🕐 Изменить время":
+        await message.answer("🕐 Введи время для приёмов пищи в формате ЧЧ:ММ через запятую или пробел.\nНапример: 09:00, 13:00, 19:00\n\nИли нажми «Назад».")
+        await state.set_state(ReminderCustomizeStates.change_meals_times)
+    elif message.text == "⬅️ Назад":
+        await state.finish()
+        await reminder_settings_menu(message)
+    else:
+        await message.answer("Выбери действие из кнопок.")
+
+async def change_meals_times(message: types.Message, state: FSMContext):
+    if message.text == "⬅️ Назад":
+        await state.finish()
+        await reminder_settings_menu(message)
+        return
+
+    parts = re.split(r'[ ,;]+', message.text)
+    times = []
+    for part in parts:
+        if is_valid_time_text(part.strip()):
+            times.append(part.strip())
+    if not times:
+        await message.answer("❌ Не удалось распознать время. Введи время в формате ЧЧ:ММ через запятую или пробел.\nИли нажми «Назад».")
+        return
+
+    times = sorted(set(times))
+    settings_data = load_reminder_settings(message.from_user.id)
+    if not settings_data:
+        settings_data = get_default_reminders()
+    if "meals" not in settings_data:
+        settings_data["meals"] = get_default_reminders()["meals"]
+    settings_data["meals"]["times"] = times
+    save_reminder_settings(message.from_user.id, settings_data)
+    await message.answer(f"✅ Время приёмов пищи изменено: {', '.join(times)}.")
+    await state.finish()
+    await reminder_settings_menu(message)
+
+# ========== РЕГИСТРАЦИЯ (добавлены новые состояния) ==========
 def register(dp: Dispatcher):
     dp.register_message_handler(settings, text="⚙️ Настройки", state="*")
     dp.register_message_handler(change_city, text="🌍 Сменить город", state="*")
@@ -246,3 +391,7 @@ def register(dp: Dispatcher):
     dp.register_message_handler(change_checkins_times, state=ReminderCustomizeStates.change_checkins_times)
     dp.register_message_handler(summary_menu_action, state=ReminderCustomizeStates.summary_menu)
     dp.register_message_handler(change_summary_time, state=ReminderCustomizeStates.change_summary_time)
+    dp.register_message_handler(water_menu_action, state=ReminderCustomizeStates.water_menu)
+    dp.register_message_handler(change_water_times, state=ReminderCustomizeStates.change_water_times)
+    dp.register_message_handler(meals_menu_action, state=ReminderCustomizeStates.meals_menu)
+    dp.register_message_handler(change_meals_times, state=ReminderCustomizeStates.change_meals_times)
