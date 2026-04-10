@@ -83,3 +83,18 @@ class ReminderCustomizeStates(StatesGroup):
     change_water_times = State()
     meals_menu = State()
     change_meals_times = State()
+
+class EditSleepStates(StatesGroup):
+    waiting = State()
+
+class EditCheckinStates(StatesGroup):
+    waiting = State()
+
+class EditSummaryStates(StatesGroup):
+    waiting = State()
+
+class EditFoodStates(StatesGroup):
+    waiting = State()
+
+class EditDrinkStates(StatesGroup):
+    waiting = State()
