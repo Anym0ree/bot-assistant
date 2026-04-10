@@ -246,6 +246,11 @@ def register(dp: Dispatcher):
     dp.register_message_handler(history_ask_date, text="✏️ Ввести дату", state="*")
     dp.register_message_handler(history_process_date, state="waiting_for_history_date")
     dp.register_message_handler(back_to_main, text="⬅️ Назад", state="*")
+    # Команды с / (работают в любом месте)
     dp.register_message_handler(list_all_sleep, commands=['мои сны'], state='*')
     dp.register_message_handler(list_all_checkins, commands=['мои чек-ины'], state='*')
     dp.register_message_handler(list_all_summaries, commands=['мои итоги'], state='*')
+    # Дублируем как текстовые (без /) – на всякий случай
+    dp.register_message_handler(list_all_sleep, text="мои сны", state='*')
+    dp.register_message_handler(list_all_checkins, text="мои чек-ины", state='*')
+    dp.register_message_handler(list_all_summaries, text="мои итоги", state='*')
