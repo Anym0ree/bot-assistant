@@ -19,6 +19,17 @@ class Database:
             command_timeout=60
         )
         await self._init_tables()
+        # Добавляем колонку remind_utc, если её нет
+        async with self.pool.acquire() as conn:
+            await conn.execute('''
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                   WHERE table_name='reminders' AND column_name='remind_utc') THEN
+                        ALTER TABLE reminders ADD COLUMN remind_utc TIMESTAMP;
+                    END IF;
+                END $$;
+            ''')
         logging.info("✅ PostgreSQL подключён!")
 
     async def _init_tables(self):
@@ -113,11 +124,11 @@ class Database:
                     parent_id INTEGER,
                     is_custom INTEGER DEFAULT 0,
                     is_active INTEGER DEFAULT 1,
-                    created_at TIMESTAMP
+                    created_at TIMESTAMP,
+                    remind_utc TIMESTAMP
                 )
             ''')
 
-    # ========== ОСНОВНЫЕ МЕТОДЫ (без изменений) ==========
     async def get_user_timezone(self, user_id):
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT timezone_offset FROM users WHERE user_id = $1", user_id)
@@ -236,28 +247,32 @@ class Database:
             result = await conn.execute("DELETE FROM notes WHERE user_id = $1 AND id = $2", user_id, note_id)
             return result != "DELETE 0"
 
-    async def add_reminder(self, user_id, text, target_date, target_time, advance_type=None, parent_id=None, is_custom=False):
-        local_dt = await self.get_user_local_datetime(user_id)
-        target_dt = datetime.strptime(f"{target_date} {target_time}", "%Y-%m-%d %H:%M")
-        if target_dt < local_dt:
-            return None
+    # НОВЫЙ МЕТОД add_reminder С ПОДДЕРЖКОЙ remind_utc
+    async def add_reminder(self, user_id, text, target_date, target_time, advance_type=None, parent_id=None, is_custom=False, remind_utc=None):
+        if remind_utc is None:
+            local_dt = await self.get_user_local_datetime(user_id)
+            target_local = datetime.strptime(f"{target_date} {target_time}", "%Y-%m-%d %H:%M")
+            if target_local < local_dt:
+                return None
+            tz_offset = await self.get_user_timezone(user_id)
+            remind_utc = target_local - timedelta(hours=tz_offset)
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow('''
-                INSERT INTO reminders (user_id, text, date, time, advance_type, parent_id, is_custom, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                INSERT INTO reminders (user_id, text, date, time, advance_type, parent_id, is_custom, created_at, remind_utc)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8)
                 RETURNING id
-            ''', user_id, text, target_date, target_time, advance_type, parent_id, 1 if is_custom else 0)
+            ''', user_id, text, target_date, target_time, advance_type, parent_id, 1 if is_custom else 0, remind_utc)
             return row[0]
 
     async def get_active_reminders(self, user_id):
         async with self.pool.acquire() as conn:
             rows = await conn.fetch('''
-                SELECT id, text, date, time, advance_type, parent_id, is_custom
+                SELECT id, text, date, time, advance_type, parent_id, is_custom, remind_utc
                 FROM reminders WHERE user_id = $1 AND is_active = 1
-                ORDER BY date, time
+                ORDER BY remind_utc
             ''', user_id)
             return [{"id": r[0], "text": r[1], "date": r[2], "time": r[3],
-                     "advance_type": r[4], "parent_id": r[5], "is_custom": r[6]} for r in rows]
+                     "advance_type": r[4], "parent_id": r[5], "is_custom": r[6], "remind_utc": r[7]} for r in rows]
 
     async def delete_reminder(self, user_id, reminder_id):
         async with self.pool.acquire() as conn:
@@ -266,25 +281,20 @@ class Database:
 
     async def get_reminders_due_now(self):
         result = []
+        now_utc = datetime.utcnow()
         async with self.pool.acquire() as conn:
-            users = await conn.fetch("SELECT DISTINCT user_id FROM reminders WHERE is_active = 1")
-            for (user_id,) in users:
-                local_dt = await self.get_user_local_datetime(user_id)
-                local_date = local_dt.strftime("%Y-%m-%d")
-                local_minute = local_dt.strftime("%H:%M")
-                rows = await conn.fetch('''
-                    SELECT id, text FROM reminders
-                    WHERE user_id = $1 AND is_active = 1 AND date = $2 AND time = $3
-                ''', user_id, local_date, local_minute)
-                for r in rows:
-                    result.append((user_id, {"id": r[0], "text": r[1]}))
+            rows = await conn.fetch('''
+                SELECT id, user_id, text FROM reminders
+                WHERE is_active = 1 AND remind_utc <= $1
+            ''', now_utc)
+            for r in rows:
+                result.append((r[1], {"id": r[0], "text": r[2]}))
         return result
 
     async def mark_reminder_sent(self, user_id, reminder_id):
         async with self.pool.acquire() as conn:
-            await conn.execute("UPDATE reminders SET is_active = 0 WHERE user_id = $1 AND id = $2", user_id, reminder_id)
+            await conn.execute("UPDATE reminders SET is_active = 0 WHERE id = $1", reminder_id)
 
-    # Оригинальный метод get_today_food_and_drinks (без id)
     async def get_today_food_and_drinks(self, user_id):
         today = await self.get_user_local_date(user_id)
         async with self.pool.acquire() as conn:
@@ -298,7 +308,6 @@ class Database:
         combined.sort(key=lambda x: x["time"])
         return combined
 
-    # НОВЫЙ МЕТОД С ID
     async def get_today_food_and_drinks_with_ids(self, user_id):
         today = await self.get_user_local_date(user_id)
         async with self.pool.acquire() as conn:
@@ -312,7 +321,6 @@ class Database:
         combined.sort(key=lambda x: x["time"])
         return combined
 
-    # НОВЫЕ МЕТОДЫ УДАЛЕНИЯ
     async def delete_food_by_id(self, user_id, food_id):
         async with self.pool.acquire() as conn:
             result = await conn.execute("DELETE FROM food WHERE user_id = $1 AND id = $2", user_id, food_id)
@@ -323,7 +331,6 @@ class Database:
             result = await conn.execute("DELETE FROM drinks WHERE user_id = $1 AND id = $2", user_id, drink_id)
             return result != "DELETE 0"
 
-    # СТАТИСТИКА, ЭКСПОРТ, _LOAD_JSON (без изменений)
     async def get_stats(self, user_id):
         async with self.pool.acquire() as conn:
             sleep_count = (await conn.fetchval("SELECT COUNT(*) FROM sleep WHERE user_id = $1", user_id)) or 0
@@ -404,8 +411,8 @@ class Database:
                 rows = await conn.fetch("SELECT id, text, date, time FROM notes WHERE user_id = $1", user_id)
                 return [{"id": r[0], "text": r[1], "date": r[2], "time": r[3]} for r in rows]
             elif filename == "reminders.json":
-                rows = await conn.fetch("SELECT id, text, date, time, advance_type, parent_id, is_custom, is_active FROM reminders WHERE user_id = $1", user_id)
-                return [{"id": r[0], "text": r[1], "date": r[2], "time": r[3], "advance_type": r[4], "parent_id": r[5], "is_custom": bool(r[6]), "is_active": bool(r[7])} for r in rows]
+                rows = await conn.fetch("SELECT id, text, date, time, advance_type, parent_id, is_custom, is_active, remind_utc FROM reminders WHERE user_id = $1", user_id)
+                return [{"id": r[0], "text": r[1], "date": r[2], "time": r[3], "advance_type": r[4], "parent_id": r[5], "is_custom": bool(r[6]), "is_active": bool(r[7]), "remind_utc": r[8]} for r in rows]
             elif filename == "food.json":
                 rows = await conn.fetch("SELECT date, time, meal_type, food_text FROM food WHERE user_id = $1", user_id)
                 return [{"date": r[0], "time": r[1], "meal_type": r[2], "food_text": r[3]} for r in rows]
