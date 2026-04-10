@@ -3,7 +3,6 @@ from aiogram.dispatcher import FSMContext
 from database_pg import db
 from states import AIState
 from keyboards import get_back_button, get_main_menu
-from utils import edit_or_send
 import ai_advisor as ai_adv_module
 
 def escape_markdown(text: str) -> str:
@@ -14,9 +13,8 @@ def escape_markdown(text: str) -> str:
 
 async def ai_advice_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
-    data = await state.get_data()
-    history = data.get('history', [])
 
+    history = await db.get_ai_history(user_id, limit=10)
     if not history:
         user_data = {
             "sleep": await db._load_json(user_id, "sleep.json"),
@@ -29,45 +27,42 @@ async def ai_advice_start(message: types.Message, state: FSMContext):
         }
         if ai_adv_module.ai_advisor:
             ai_adv_module.ai_advisor.set_user_data(user_id, user_data)
-            await AIState.waiting_question.set()
-            await message.answer("🤖 *Загружаю ваши данные для анализа...*", parse_mode="Markdown")
-            advice = await ai_adv_module.ai_advisor.get_advice(user_id)
-            advice = escape_markdown(advice)
-            await message.answer(
-                f"🤖 *Совет AI:*\n\n{advice}",
-                parse_mode="Markdown",
-                reply_markup=get_back_button()
-            )
-            await message.answer(
-                "✏️ *Вы можете задать уточняющий вопрос* или написать /cancel для выхода.",
-                parse_mode="Markdown"
-            )
-            await state.update_data(history=[{"role": "assistant", "content": advice}])
+            first_message = await ai_adv_module.ai_advisor.get_first_advice(user_id)
+            await message.answer(first_message, parse_mode="Markdown", reply_markup=get_back_button())
+            await db.save_ai_message(user_id, "assistant", first_message)
         else:
             await message.answer("❌ AI-модуль не инициализирован. Проверьте настройки.")
-    else:
-        await AIState.waiting_question.set()
-        await message.answer(
-            "🤖 *AI-совет активен*. Задайте свой вопрос.\n\n"
-            "Если хотите выйти, напишите /cancel.",
-            parse_mode="Markdown",
-            reply_markup=get_back_button()
-        )
+            return
+
+    await AIState.waiting_question.set()
+    await message.answer(
+        "✏️ *Задай свой вопрос* или напиши /cancel для выхода.\n\n"
+        "Я помню предыдущие вопросы и могу дать совет на основе всей истории.",
+        parse_mode="Markdown",
+        reply_markup=get_back_button()
+    )
 
 async def ai_question(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
+
     if message.text == "/cancel":
         await state.finish()
+        await db.clear_ai_history(user_id)
         if ai_adv_module.ai_advisor:
             ai_adv_module.ai_advisor.clear_user_data(user_id)
-        await message.answer("✅ Выход из AI-режима.", reply_markup=get_main_menu())
+        await message.answer("✅ История диалога очищена. Выход из AI-режима.", reply_markup=get_main_menu())
         return
+
     if message.text == "⬅️ Назад":
         await state.finish()
+        await db.clear_ai_history(user_id)
         if ai_adv_module.ai_advisor:
             ai_adv_module.ai_advisor.clear_user_data(user_id)
         await message.answer("✅ Выход из AI-режима.", reply_markup=get_main_menu())
         return
+
+    history = await db.get_ai_history(user_id, limit=10)
+    await db.save_ai_message(user_id, "user", message.text)
 
     if ai_adv_module.ai_advisor and not ai_adv_module.ai_advisor.get_user_data(user_id):
         user_data = {
@@ -81,15 +76,11 @@ async def ai_question(message: types.Message, state: FSMContext):
         }
         ai_adv_module.ai_advisor.set_user_data(user_id, user_data)
 
-    data = await state.get_data()
-    history = data.get('history', [])
-    history.append({"role": "user", "content": message.text})
     await message.bot.send_chat_action(message.chat.id, "typing")
     if ai_adv_module.ai_advisor:
         advice = await ai_adv_module.ai_advisor.get_advice(user_id, message.text, history)
         advice = escape_markdown(advice)
-        history.append({"role": "assistant", "content": advice})
-        await state.update_data(history=history)
+        await db.save_ai_message(user_id, "assistant", advice)
         await message.answer(
             f"🤖 *Ответ:*\n\n{advice}",
             parse_mode="Markdown",
