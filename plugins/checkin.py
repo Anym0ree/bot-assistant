@@ -1,10 +1,12 @@
 from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
 from database_pg import db
-from states import CheckinStates
-from keyboards import get_energy_stress_buttons, get_emotion_buttons, get_skip_markup_text, get_main_menu
+from states import CheckinStates, EditCheckinStates
+from keyboards import get_energy_stress_buttons, get_emotion_buttons, get_skip_markup_text, get_main_menu, get_back_button
 from utils import edit_or_send, delete_dialog_message, send_temp_message, safe_finish, is_valid_score_text
+import json
 
+# ========== СОЗДАНИЕ ЧЕК-ИНА ==========
 async def checkin_start(message: types.Message, state: FSMContext):
     await CheckinStates.energy.set()
     await edit_or_send(state, message.chat.id, "Оцени уровень энергии (1–10):", get_energy_stress_buttons(), edit=False)
@@ -98,9 +100,8 @@ async def edit_checkin_start(message: types.Message, state: FSMContext):
     emotions = target['emotions']
     if emotions:
         try:
-            import json
-            emotions = json.loads(emotions)
-            emotions = ", ".join(emotions)
+            emotions_list = json.loads(emotions)
+            emotions = ", ".join(emotions_list)
         except:
             pass
     else:
@@ -134,7 +135,6 @@ async def edit_checkin_process(message: types.Message, state: FSMContext):
         await message.answer("❌ Редактирование отменено.", reply_markup=get_main_menu())
         return
     elif text == "готово":
-        import json
         async with db.pool.acquire() as conn:
             await conn.execute(
                 "UPDATE checkins SET energy=$1, stress=$2, emotions=$3, note=$4 WHERE id=$5",
@@ -184,7 +184,8 @@ async def edit_checkin_process(message: types.Message, state: FSMContext):
         await message.answer("❌ Неизвестная команда. Доступные: энергия, стресс, эмоции, заметка, готово, отмена")
 
     await state.update_data(edit_data=edit_data)
-    
+
+# ========== РЕГИСТРАЦИЯ ==========
 def register(dp: Dispatcher):
     dp.register_message_handler(checkin_start, text="⚡️ Чек-ин", state="*")
     dp.register_message_handler(checkin_energy, state=CheckinStates.energy)
