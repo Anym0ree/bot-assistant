@@ -19,7 +19,7 @@ class Database:
             command_timeout=60
         )
         await self._init_tables()
-        # Добавляем колонку remind_utc, если её нет
+        # Автоматически добавляем колонку remind_utc, если её нет
         async with self.pool.acquire() as conn:
             await conn.execute('''
                 DO $$
@@ -27,6 +27,7 @@ class Database:
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
                                    WHERE table_name='reminders' AND column_name='remind_utc') THEN
                         ALTER TABLE reminders ADD COLUMN remind_utc TIMESTAMP;
+                        RAISE NOTICE 'Колонка remind_utc добавлена';
                     END IF;
                 END $$;
             ''')
@@ -124,8 +125,7 @@ class Database:
                     parent_id INTEGER,
                     is_custom INTEGER DEFAULT 0,
                     is_active INTEGER DEFAULT 1,
-                    created_at TIMESTAMP,
-                    remind_utc TIMESTAMP
+                    created_at TIMESTAMP
                 )
             ''')
 
@@ -247,8 +247,8 @@ class Database:
             result = await conn.execute("DELETE FROM notes WHERE user_id = $1 AND id = $2", user_id, note_id)
             return result != "DELETE 0"
 
-    # НОВЫЙ МЕТОД add_reminder С ПОДДЕРЖКОЙ remind_utc
     async def add_reminder(self, user_id, text, target_date, target_time, advance_type=None, parent_id=None, is_custom=False, remind_utc=None):
+        # Если remind_utc не передан, вычисляем по local времени пользователя
         if remind_utc is None:
             local_dt = await self.get_user_local_datetime(user_id)
             target_local = datetime.strptime(f"{target_date} {target_time}", "%Y-%m-%d %H:%M")
