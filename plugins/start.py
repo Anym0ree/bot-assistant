@@ -16,7 +16,6 @@ CITY_TO_OFFSET = {
 
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
-    chat_id = message.chat.id
     if await db.get_user_timezone(user_id) == 0:
         await message.answer(
             "👋 Привет! Я твой личный дневник-трекер.\n\n"
@@ -26,7 +25,6 @@ async def cmd_start(message: types.Message):
         )
         await TimezoneStates.city.set()
     else:
-        # Проверяем, заполнен ли профиль
         profile = await db.get_user_profile(user_id)
         if profile['age'] == 0 or profile['height'] == 0 or profile['weight'] == 0:
             await message.answer(
@@ -62,7 +60,7 @@ async def cmd_menu(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("Главное меню", reply_markup=get_main_menu())
 
-# ========== ПРОФИЛЬ (возраст, рост, вес) ==========
+# ========== ПРОФИЛЬ ==========
 async def profile_age(message: types.Message, state: FSMContext):
     if message.text == "⬅️ Назад":
         await safe_finish(state, message)
@@ -103,18 +101,97 @@ async def profile_weight(message: types.Message, state: FSMContext):
             data = await state.get_data()
             await db.update_user_profile(message.from_user.id, age=data['age'], height=data['height'], weight=weight)
             await state.finish()
-            await message.answer("✅ Профиль сохранён!\n\nТеперь я могу давать более точные советы с учётом твоего возраста, роста и веса.")
+            await message.answer("✅ Профиль сохранён! Теперь я могу давать более точные советы.")
             await show_main_menu(message)
         else:
             await message.answer("❌ Вес должен быть от 10 до 300 кг. Попробуй ещё раз.")
     except ValueError:
         await message.answer("❌ Введи число. Какой у тебя вес в кг?")
 
-# ========== ВЫБОР ЧАСОВОГО ПОЯСА (как было) ==========
+# ========== ЧАСОВОЙ ПОЯС ==========
 async def timezone_city(message: types.Message, state: FSMContext):
     if message.text in ("❌ Отмена", "⬅️ Назад"):
         await safe_finish(state, message)
         return
     if message.text == "Другое":
         await TimezoneStates.offset.set()
-        await edit_or
+        await edit_or_send(state, message.chat.id, "Введи смещение от UTC (например: -5, 0, +3):", get_back_button(), edit=False)
+        return
+    if message.text in CITY_TO_OFFSET:
+        await db.set_user_timezone(message.from_user.id, CITY_TO_OFFSET[message.text])
+        await delete_dialog_message(state)
+        await state.finish()
+        await message.answer(
+            "✅ Часовой пояс сохранён.\n\n🔔 Хочешь включить напоминания?",
+            reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("✅ Да", "❌ Нет")
+        )
+        await ReminderSetupStates.ask.set()
+        return
+    await message.answer("Выбери город из кнопок или нажми «Другое».", reply_markup=get_timezone_buttons())
+
+async def timezone_offset(message: types.Message, state: FSMContext):
+    if message.text == "⬅️ Назад":
+        await TimezoneStates.city.set()
+        await edit_or_send(state, message.chat.id, "Выбери свой город или нажми «Другое»:", get_timezone_buttons(), edit=True)
+        return
+    if message.text == "❌ Отмена":
+        await safe_finish(state, message)
+        return
+    raw_value = message.text.strip().replace("UTC", "").replace("utc", "")
+    if not re.fullmatch(r"[+-]?\d{1,2}", raw_value):
+        await send_temp_message(message.chat.id, "❌ Введи число от -12 до +14 (например: -5, 0, +3).", 3)
+        return
+    offset = int(raw_value)
+    if offset < -12 or offset > 14:
+        await send_temp_message(message.chat.id, "❌ Смещение должно быть в диапазоне от -12 до +14.", 3)
+        return
+    await db.set_user_timezone(message.from_user.id, offset)
+    await delete_dialog_message(state)
+    await state.finish()
+    await message.answer(
+        "✅ Часовой пояс сохранён.\n\n🔔 Хочешь включить напоминания?",
+        reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("✅ Да", "❌ Нет")
+    )
+    await ReminderSetupStates.ask.set()
+
+async def reminder_setup_ask(message: types.Message, state: FSMContext):
+    if message.text == "❌ Нет":
+        settings = get_default_reminders()
+        settings["sleep"]["enabled"] = False
+        settings["checkins"]["enabled"] = False
+        settings["summary"]["enabled"] = False
+        save_reminder_settings(message.from_user.id, settings)
+        await state.finish()
+        await show_main_menu(message)
+        return
+    await message.answer(
+        "Использовать стандартные настройки?\n\n"
+        "🛌 Сон — 09:00\n⚡️ Чек-ины — 12:00, 16:00, 20:00\n📝 Итог дня — 22:30",
+        reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("✅ Да", "✏️ Настроить вручную")
+    )
+    await ReminderSetupStates.choose_mode.set()
+
+async def reminder_setup_mode(message: types.Message, state: FSMContext):
+    if message.text == "✅ Да":
+        save_reminder_settings(message.from_user.id, get_default_reminders())
+        await state.finish()
+        await message.answer("✅ Напоминания включены со стандартными настройками!", reply_markup=get_main_menu())
+        await show_main_menu(message)
+    elif message.text == "✏️ Настроить вручную":
+        await state.finish()
+        from plugins.settings import reminder_settings_menu
+        await reminder_settings_menu(message)
+    else:
+        await message.answer("Выбери вариант из кнопок.")
+
+# ========== РЕГИСТРАЦИЯ ==========
+def register(dp: Dispatcher):
+    dp.register_message_handler(cmd_start, commands=['start'], state='*')
+    dp.register_message_handler(cmd_menu, commands=['menu'], state='*')
+    dp.register_message_handler(timezone_city, state=TimezoneStates.city)
+    dp.register_message_handler(timezone_offset, state=TimezoneStates.offset)
+    dp.register_message_handler(reminder_setup_ask, state=ReminderSetupStates.ask)
+    dp.register_message_handler(reminder_setup_mode, state=ReminderSetupStates.choose_mode)
+    dp.register_message_handler(profile_age, state=ProfileStates.age)
+    dp.register_message_handler(profile_height, state=ProfileStates.height)
+    dp.register_message_handler(profile_weight, state=ProfileStates.weight)
