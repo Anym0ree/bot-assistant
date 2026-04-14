@@ -9,18 +9,17 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from database_pg import db
 from states import ExportStates
 from keyboards import get_export_menu, get_download_formats_keyboard, get_back_button, get_main_menu
 from utils import edit_or_send, delete_dialog_message, send_temp_message, safe_finish, download_media_with_ytdlp, safe_remove_file, safe_delete_message_obj
 
-# ========== Функция извлечения URL ==========
 def extract_url(text: str) -> str:
     match = re.search(r'https?://[^\s]+', text)
     return match.group(0) if match else None
 
-# ========== ГРАФИКИ ==========
 def plot_stats(data_df, period_name):
     if data_df.empty:
         return None
@@ -119,31 +118,49 @@ async def get_stats_data(user_id, days=30):
         df_all['day_score'] = None
     return df_all
 
-# ========== СТАТИСТИКА (с обычными кнопками) ==========
 async def stats_menu(message: types.Message):
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("📅 Неделя", "📆 Месяц")
-    kb.add("📄 Текстовая статистика", "⬅️ Назад")
-    await message.answer("📊 Выбери период для графика или текстовую статистику:", reply_markup=kb)
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("📅 Неделя", callback_data="stats_week"),
+        InlineKeyboardButton("📆 Месяц", callback_data="stats_month"),
+        InlineKeyboardButton("📄 Текстовая статистика", callback_data="stats_text"),
+        InlineKeyboardButton("⬅️ Назад", callback_data="stats_back")
+    )
+    await message.answer("📊 Выбери период для графиков или текстовую статистику:", reply_markup=keyboard)
 
-async def stats_week(message: types.Message):
-    await send_graph(message, days=7, period_name="неделю")
-
-async def stats_month(message: types.Message):
-    await send_graph(message, days=30, period_name="месяц")
-
-async def send_graph(message: types.Message, days: int, period_name: str):
-    user_id = message.from_user.id
-    await message.answer("⏳ Загружаю данные, строю график...")
+async def stats_callback_handler(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    data = callback_query.data
+    if data == "stats_back":
+        await callback_query.message.delete()
+        await callback_query.message.answer("Главное меню", reply_markup=get_main_menu())
+        await callback_query.answer()
+        return
+    if data == "stats_text":
+        text = await db.get_stats(user_id)
+        await callback_query.message.answer(text, reply_markup=get_main_menu())
+        await callback_query.message.delete()
+        await callback_query.answer()
+        return
+    if data == "stats_week":
+        days = 7
+        period_name = "неделю"
+    elif data == "stats_month":
+        days = 30
+        period_name = "месяц"
+    else:
+        await callback_query.answer("Неизвестный выбор")
+        return
+    await callback_query.answer("Загружаю данные...")
     df = await get_stats_data(user_id, days=days)
     if df.empty:
-        await message.answer("❌ Недостаточно данных для построения графика за этот период.")
+        await callback_query.message.answer("❌ Недостаточно данных для построения графика за этот период.")
         return
     avg_sleep = df['sleep_hours'].mean()
     avg_energy = df['energy'].mean()
     avg_stress = df['stress'].mean()
     avg_score = df['day_score'].mean()
-    text = (
+    text_analysis = (
         f"📈 *Анализ за {period_name}*:\n"
         f"🛌 Сон: {avg_sleep:.1f} часов в среднем\n"
         f"⚡️ Энергия: {avg_energy:.1f}/10\n"
@@ -151,49 +168,22 @@ async def send_graph(message: types.Message, days: int, period_name: str):
         f"📝 Оценка дня: {avg_score:.1f}/10\n"
     )
     if avg_sleep < 7:
-        text += "😴 Ты мало спишь. Постарайся спать не менее 7-8 часов.\n"
+        text_analysis += "😴 Ты мало спишь. Постарайся спать не менее 7-8 часов.\n"
     if avg_energy < 5:
-        text += "🔋 Энергия низкая. Возможно, нужен отдых или пересмотр питания.\n"
+        text_analysis += "🔋 Энергия низкая. Возможно, нужен отдых или пересмотр питания.\n"
     if avg_stress > 6:
-        text += "🧘‍♂️ Уровень стресса высок. Попробуй техники релаксации.\n"
+        text_analysis += "🧘‍♂️ Уровень стресса высок. Попробуй техники релаксации.\n"
     buf = plot_stats(df, period_name)
     if buf:
-        await message.answer_photo(photo=buf, caption=text, parse_mode="Markdown")
+        await callback_query.message.answer_photo(photo=buf, caption=text_analysis, parse_mode="Markdown")
     else:
-        await message.answer(text, parse_mode="Markdown")
+        await callback_query.message.answer(text_analysis, parse_mode="Markdown")
+    await callback_query.message.delete()
+    await callback_query.answer()
 
-async def stats_text(message: types.Message):
-    user_id = message.from_user.id
-    old_stats = await db.get_stats(user_id)
-    async with db.pool.acquire() as conn:
-        avg_score = await conn.fetchval("SELECT AVG(score) FROM day_summary WHERE user_id = $1", user_id)
-        total_summaries = await conn.fetchval("SELECT COUNT(*) FROM day_summary WHERE user_id = $1", user_id)
-        best_day = await conn.fetchrow(
-            "SELECT date, score FROM day_summary WHERE user_id = $1 ORDER BY score DESC LIMIT 1",
-            user_id
-        )
-        worst_day = await conn.fetchrow(
-            "SELECT date, score FROM day_summary WHERE user_id = $1 ORDER BY score ASC LIMIT 1",
-            user_id
-        )
-    summary_stats = "\n📝 *Итоги дня:*\n"
-    if total_summaries and total_summaries > 0:
-        summary_stats += f"• Всего подведено итогов: {total_summaries}\n"
-        if avg_score:
-            summary_stats += f"• Средняя оценка дня: {avg_score:.1f}/10\n"
-        if best_day:
-            summary_stats += f"• Лучший день: {best_day['date']} (оценка {best_day['score']}/10)\n"
-        if worst_day:
-            summary_stats += f"• Худший день: {worst_day['date']} (оценка {worst_day['score']}/10)\n"
-    else:
-        summary_stats += "• Нет ни одного подведённого итога дня.\n"
-    full_stats = old_stats + summary_stats
-    await message.answer(full_stats, parse_mode="Markdown", reply_markup=get_main_menu())
+async def stats(message: types.Message):
+    await stats_menu(message)
 
-async def back_to_main(message: types.Message):
-    await message.answer("Главное меню", reply_markup=get_main_menu())
-
-# ========== ЭКСПОРТ (без изменений) ==========
 async def export_menu(message: types.Message):
     await message.answer("📤 Выбери, что хочешь экспортировать:", reply_markup=get_export_menu())
 
@@ -209,12 +199,12 @@ async def export_any_start(message: types.Message, state: FSMContext):
         await edit_or_send(state, message.chat.id,
                            "📎 Отправь ссылку на трек или плейлист (YouTube, SoundCloud, VK, Spotify и др.).\n"
                            "Можно просто скопировать ссылку из приложения — я сам найду её в тексте.",
-                           get_back_button(), edit=False)
+                           keyboard=get_back_button(), edit=False)
     else:
         await edit_or_send(state, message.chat.id,
                            f"📎 Отправь ссылку на трек или плейлист {message.text}.\n"
                            "Можно просто скопировать ссылку из приложения — я сам найду её в тексте.",
-                           get_back_button(), edit=False)
+                           keyboard=get_back_button(), edit=False)
 
 async def export_any_url(message: types.Message, state: FSMContext):
     if message.text == "⬅️ Назад":
@@ -228,13 +218,13 @@ async def export_any_url(message: types.Message, state: FSMContext):
                                 4)
         await edit_or_send(state, message.chat.id,
                            "📎 Отправь ссылку на трек или плейлист:",
-                           get_back_button(), edit=True)
+                           keyboard=get_back_button(), edit=True)
         return
     await state.update_data(url=url)
     await ExportStates.format.set()
     await edit_or_send(state, message.chat.id,
                        "🎵 Выбери формат:",
-                       reply_markup=get_download_formats_keyboard(source="unknown"),
+                       keyboard=get_download_formats_keyboard(source="unknown"),
                        edit=True)
 
 async def export_any_format(message: types.Message, state: FSMContext):
@@ -246,7 +236,7 @@ async def export_any_format(message: types.Message, state: FSMContext):
     allowed_formats = {"MP3 (аудио)", "WAV (аудио)", "MP4 (видео)", "Лучшее качество (оригинал)"}
     if fmt not in allowed_formats:
         await send_temp_message(message.chat.id, "❌ Выбери формат только кнопками.", 3)
-        await edit_or_send(state, message.chat.id, "Выбери формат:", get_download_formats_keyboard(), edit=True)
+        await edit_or_send(state, message.chat.id, "Выбери формат:", keyboard=get_download_formats_keyboard(), edit=True)
         return
     data = await state.get_data()
     url = data.get('url')
@@ -291,15 +281,11 @@ async def export_any_format(message: types.Message, state: FSMContext):
         safe_remove_file(filename)
     await message.answer("Главное меню", reply_markup=get_main_menu())
 
-# ========== РЕГИСТРАЦИЯ ==========
 def register(dp: Dispatcher):
-    dp.register_message_handler(stats_menu, text="📊 Статистика", state="*")
-    dp.register_message_handler(stats_week, text="📅 Неделя", state="*")
-    dp.register_message_handler(stats_month, text="📆 Месяц", state="*")
-    dp.register_message_handler(stats_text, text="📄 Текстовая статистика", state="*")
-    dp.register_message_handler(back_to_main, text="⬅️ Назад", state="*")
+    dp.register_message_handler(stats, text="📊 Статистика", state="*")
     dp.register_message_handler(export_menu, text="📤 Экспорт", state="*")
     dp.register_message_handler(export_all_data, text="📥 Экспорт всех данных", state="*")
     dp.register_message_handler(export_any_start, text=["🎵 SoundCloud", "📌 Pinterest (видео)", "🌐 Другой URL"], state="*")
     dp.register_message_handler(export_any_url, state=ExportStates.url)
     dp.register_message_handler(export_any_format, state=ExportStates.format)
+    dp.register_callback_query_handler(stats_callback_handler, lambda c: c.data.startswith('stats_'))
