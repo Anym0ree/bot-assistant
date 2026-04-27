@@ -1,6 +1,6 @@
 from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
-from database_pg import db
+from database import db
 from states import SleepStates, EditSleepStates
 from keyboards import get_time_buttons, get_morning_time_buttons, get_yes_no_buttons, get_skip_markup_text, get_main_menu, get_sleep_quality_buttons, get_back_button
 from utils import edit_or_send, delete_dialog_message, send_temp_message, safe_finish, is_valid_time_text

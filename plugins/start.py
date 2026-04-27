@@ -2,7 +2,7 @@ from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters import Command
 from keyboards import get_timezone_buttons, get_main_menu, get_back_button
-from database_pg import db
+from database import db
 from states import TimezoneStates, ReminderSetupStates, ProfileStates
 from utils import edit_or_send, delete_dialog_message, send_temp_message, safe_finish
 from reminder_utils import save_reminder_settings, get_default_reminders

@@ -1,6 +1,6 @@
 from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
-from database_pg import db
+from database import db
 from states import AIState, ProfileStates
 from keyboards import get_back_button, get_main_menu
 import ai_advisor as ai_adv_module

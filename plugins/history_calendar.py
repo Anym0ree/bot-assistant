@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
-from database_pg import db
+from database import db
 from keyboards import get_main_menu
 import json
 

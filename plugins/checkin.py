@@ -1,6 +1,6 @@
 from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
-from database_pg import db
+from database import db
 from states import CheckinStates, EditCheckinStates
 from keyboards import get_energy_stress_buttons, get_emotion_buttons, get_skip_markup_text, get_main_menu, get_back_button
 from utils import edit_or_send, delete_dialog_message, send_temp_message, safe_finish, is_valid_score_text

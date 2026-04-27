@@ -3,7 +3,7 @@ import aiohttp
 from typing import Dict, Optional, List
 from datetime import datetime, timedelta
 import json
-from database_pg import db
+from database import db
 
 logger = logging.getLogger(__name__)
 

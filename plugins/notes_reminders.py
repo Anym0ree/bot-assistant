@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timedelta
 from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
-from database_pg import db
+from database import db
 from states import NoteStates, ReminderStates, LastSectionState
 from keyboards import get_notes_reminders_main_menu, get_record_type_buttons, get_view_type_buttons, get_back_button, get_reminder_date_buttons, get_reminder_hour_buttons, get_reminder_minute_buttons, get_reminder_advance_buttons, get_main_menu
 from utils import edit_or_send, delete_dialog_message, send_temp_message, safe_finish

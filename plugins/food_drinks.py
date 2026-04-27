@@ -1,6 +1,6 @@
 from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
-from database_pg import db
+from database import db
 from states import FoodDrinkStates, FoodStates, DrinkStates, EditFoodStates, EditDrinkStates
 from keyboards import get_food_drink_menu, get_food_drink_type_buttons, get_meal_type_buttons, get_drink_type_buttons, get_drink_amount_buttons, get_back_button, get_main_menu
 from utils import edit_or_send, delete_dialog_message, send_temp_message, safe_finish

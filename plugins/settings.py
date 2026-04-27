@@ -3,7 +3,7 @@ import json
 import os
 from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
-from database_pg import db
+from database import db
 from states import TimezoneStates, ReminderCustomizeStates
 from keyboards import get_settings_menu_no_reset, get_timezone_buttons, get_main_menu
 from utils import send_temp_message, is_valid_time_text
