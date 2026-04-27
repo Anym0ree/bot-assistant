@@ -1,31 +1,22 @@
-import os
-import json
-import logging
+from database import db
 
-REMINDER_FILE = "reminder_settings.json"
+async def load_reminder_settings(user_id):
+    """Возвращает dict в старом формате для совместимости"""
+    settings = {}
+    for key in ["sleep", "checkins", "summary", "water", "meals"]:
+        s = await db.get_reminder_setting(user_id, key)
+        if key in ["sleep", "summary"]:
+            settings[key] = {"enabled": s["enabled"], "time": s["times"][0] if s["times"] else "09:00"}
+        else:
+            settings[key] = {"enabled": s["enabled"], "times": s["times"]}
+    return settings
 
-def load_reminder_settings(user_id):
-    try:
-        if not os.path.exists(REMINDER_FILE):
-            return None
-        with open(REMINDER_FILE, "r") as f:
-            data = json.load(f)
-        return data.get(str(user_id))
-    except Exception as e:
-        logging.error(f"Ошибка загрузки настроек напоминаний: {e}")
-        return None
-
-def save_reminder_settings(user_id, settings):
-    data = {}
-    if os.path.exists(REMINDER_FILE):
-        try:
-            with open(REMINDER_FILE, "r") as f:
-                data = json.load(f)
-        except Exception:
-            pass
-    data[str(user_id)] = settings
-    with open(REMINDER_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+async def save_reminder_settings(user_id, settings):
+    for key, val in settings.items():
+        if key in ["sleep", "summary"]:
+            await db.set_reminder_setting(user_id, key, val["enabled"], [val.get("time", "09:00")])
+        else:
+            await db.set_reminder_setting(user_id, key, val["enabled"], val.get("times", []))
 
 def get_default_reminders():
     return {
