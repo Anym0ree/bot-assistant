@@ -97,6 +97,8 @@ class AIAdvisor:
         else:
             stats['avg_day_score'] = 0
             stats['summaries_count'] = 0
+            stats['best_day_score'] = 0
+            stats['worst_day_score'] = 0
 
         stats['food_count'] = len(data.get("food", []))
         stats['drinks_count'] = len(data.get("drinks", []))
@@ -188,10 +190,10 @@ class AIAdvisor:
                         content = content.replace('*', '').replace('_', '').replace('`', '').replace('~', '').replace('#', '').replace('>', '')
                         return content
                     else:
-                        return "⚠️ Ошибка AI-сервиса. Попробуйте позже."
+                        return f"⚠️ Ошибка AI-сервиса (код {resp.status}). Попробуйте позже."
             except Exception as e:
                 logger.error(f"AI request failed: {e}")
-                return "⚠️ Не удалось связаться с AI-сервисом."
+                return f"⚠️ Не удалось связаться с AI-сервисом: {str(e)[:100]}"
 
     async def analyze_day(self, user_id: int, date_str: str) -> str:
         user_data = self.get_user_data(user_id)
