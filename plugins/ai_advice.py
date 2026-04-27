@@ -22,6 +22,14 @@ async def edit_status_message(status_msg: types.Message, text: str, emoji: str =
 async def ai_advice_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     
+    # Проверка настройки AI
+    async with db.pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT ai_enabled FROM user_settings WHERE user_id = $1", user_id)
+        ai_enabled = row['ai_enabled'] if row else 1
+    if not ai_enabled:
+        await message.answer("🤖 AI-совет отключён в настройках. Включи его в разделе ⚙️ Настройки.")
+        return
+
     status_msg = await message.answer("🤖 Подключаюсь к AI-серверу...")
     await asyncio.sleep(0.5)
     
