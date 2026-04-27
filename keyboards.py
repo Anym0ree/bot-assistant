@@ -297,3 +297,11 @@ def get_sleep_quality_buttons():
         [KeyboardButton(text="⬅️ Назад"), KeyboardButton(text="❌ Отмена")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+def get_stats_period_keyboard():
+    buttons = [
+        [KeyboardButton(text="📅 Неделя")],
+        [KeyboardButton(text="📆 Месяц")],
+        [KeyboardButton(text="📊 Вся статистика")],
+        [KeyboardButton(text="⬅️ Назад")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
