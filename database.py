@@ -12,9 +12,8 @@ class Database:
         self.conn = None
 
     async def init_pool(self):
-        """Инициализация соединения с SQLite (аналог init_pool)"""
         self.conn = await aiosqlite.connect(self.db_path)
-        self.conn.row_factory = aiosqlite.Row  # чтобы возвращал словари
+        self.conn.row_factory = aiosqlite.Row
         await self._init_tables()
         await self._migrate_reminder_settings()
         logging.info("✅ SQLite подключён!")
@@ -24,8 +23,7 @@ class Database:
             await self.conn.close()
 
     async def _init_tables(self):
-        """Создаёт все таблицы, если их нет"""
-        # Старые таблицы (твои)
+        # users
         await self.conn.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -36,6 +34,7 @@ class Database:
                 weight INTEGER DEFAULT 0
             )
         ''')
+        # sleep
         await self.conn.execute('''
             CREATE TABLE IF NOT EXISTS sleep (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,6 +48,7 @@ class Database:
                 note TEXT
             )
         ''')
+        # checkins
         await self.conn.execute('''
             CREATE TABLE IF NOT EXISTS checkins (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,6 +63,7 @@ class Database:
                 note TEXT
             )
         ''')
+        # day_summary
         await self.conn.execute('''
             CREATE TABLE IF NOT EXISTS day_summary (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,6 +77,7 @@ class Database:
                 note TEXT
             )
         ''')
+        # food
         await self.conn.execute('''
             CREATE TABLE IF NOT EXISTS food (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,6 +89,7 @@ class Database:
                 food_text TEXT
             )
         ''')
+        # drinks
         await self.conn.execute('''
             CREATE TABLE IF NOT EXISTS drinks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,6 +101,7 @@ class Database:
                 amount TEXT
             )
         ''')
+        # notes
         await self.conn.execute('''
             CREATE TABLE IF NOT EXISTS notes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -108,6 +112,7 @@ class Database:
                 timestamp TIMESTAMP
             )
         ''')
+        # reminders
         await self.conn.execute('''
             CREATE TABLE IF NOT EXISTS reminders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,6 +128,7 @@ class Database:
                 remind_utc TIMESTAMP
             )
         ''')
+        # ai_history
         await self.conn.execute('''
             CREATE TABLE IF NOT EXISTS ai_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -135,7 +141,7 @@ class Database:
         await self.conn.execute('CREATE INDEX IF NOT EXISTS idx_ai_history_user_id ON ai_history(user_id)')
         await self.conn.execute('CREATE INDEX IF NOT EXISTS idx_ai_history_created_at ON ai_history(created_at)')
 
-        # Новые таблицы (геймификация, цели, настройки напоминаний)
+        # user_reminder_settings
         await self.conn.execute('''
             CREATE TABLE IF NOT EXISTS user_reminder_settings (
                 user_id INTEGER NOT NULL,
@@ -145,6 +151,7 @@ class Database:
                 PRIMARY KEY (user_id, setting_type)
             )
         ''')
+        # user_goals
         await self.conn.execute('''
             CREATE TABLE IF NOT EXISTS user_goals (
                 user_id INTEGER PRIMARY KEY,
@@ -152,6 +159,7 @@ class Database:
                 set_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        # achievements
         await self.conn.execute('''
             CREATE TABLE IF NOT EXISTS achievements (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -161,6 +169,7 @@ class Database:
                 icon TEXT
             )
         ''')
+        # user_achievements
         await self.conn.execute('''
             CREATE TABLE IF NOT EXISTS user_achievements (
                 user_id INTEGER NOT NULL,
@@ -169,6 +178,7 @@ class Database:
                 PRIMARY KEY (user_id, achievement_code)
             )
         ''')
+        # user_stats
         await self.conn.execute('''
             CREATE TABLE IF NOT EXISTS user_stats (
                 user_id INTEGER PRIMARY KEY,
@@ -180,8 +190,20 @@ class Database:
                 last_sleep_date TEXT
             )
         ''')
+        # НОВАЯ ТАБЛИЦА ДЛЯ НАСТРОЕК
+        await self.conn.execute('''
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id INTEGER PRIMARY KEY,
+                ai_enabled INTEGER DEFAULT 1,
+                reminders_enabled INTEGER DEFAULT 1,
+                daily_surveys_enabled INTEGER DEFAULT 1,
+                weekly_report_enabled INTEGER DEFAULT 1,
+                do_not_disturb_start TEXT,
+                do_not_disturb_end TEXT
+            )
+        ''')
 
-        # Вставка достижений по умолчанию, если таблица пуста
+        # Вставка достижений по умолчанию
         await self.conn.execute('''
             INSERT OR IGNORE INTO achievements (code, name, description, icon)
             VALUES
@@ -194,7 +216,6 @@ class Database:
         await self.conn.commit()
 
     async def _migrate_reminder_settings(self):
-        """Если есть старый JSON-файл с настройками напоминаний – переносим в БД"""
         if not os.path.exists("reminder_settings.json"):
             return
         try:
@@ -202,19 +223,14 @@ class Database:
                 data = json.load(f)
             for user_id_str, settings in data.items():
                 user_id = int(user_id_str)
-                # sleep
                 sleep = settings.get("sleep", {})
                 await self.set_reminder_setting(user_id, "sleep", sleep.get("enabled", True), [sleep.get("time", "09:00")])
-                # checkins
                 ch = settings.get("checkins", {})
                 await self.set_reminder_setting(user_id, "checkins", ch.get("enabled", True), ch.get("times", ["12:00", "16:00", "20:00"]))
-                # summary
                 summ = settings.get("summary", {})
                 await self.set_reminder_setting(user_id, "summary", summ.get("enabled", True), [summ.get("time", "22:30")])
-                # water
                 water = settings.get("water", {})
                 await self.set_reminder_setting(user_id, "water", water.get("enabled", True), water.get("times", ["10:00", "14:00", "18:00", "22:00"]))
-                # meals
                 meals = settings.get("meals", {})
                 await self.set_reminder_setting(user_id, "meals", meals.get("enabled", True), meals.get("times", ["09:00", "13:00", "19:00"]))
             os.rename("reminder_settings.json", "reminder_settings.json.bak")
@@ -222,7 +238,6 @@ class Database:
         except Exception as e:
             logging.error(f"Ошибка миграции reminder_settings: {e}")
 
-    # ========== НОВЫЕ МЕТОДЫ ДЛЯ НАПОМИНАНИЙ (БД) ==========
     async def get_reminder_setting(self, user_id: int, setting_type: str):
         async with self.conn.execute(
             "SELECT enabled, times FROM user_reminder_settings WHERE user_id = ? AND setting_type = ?",
@@ -252,7 +267,6 @@ class Database:
               1 if enabled else 0, times_json))
         await self.conn.commit()
 
-    # ========== ЦЕЛИ ПОЛЬЗОВАТЕЛЯ ==========
     async def set_user_goal(self, user_id: int, goal: str):
         await self.conn.execute("""
             INSERT INTO user_goals (user_id, goal, set_at)
@@ -266,9 +280,7 @@ class Database:
         row = await cursor.fetchone()
         return row[0] if row else ""
 
-    # ========== ДОСТИЖЕНИЯ ==========
     async def award_achievement(self, user_id: int, code: str):
-        """Возвращает (name, icon) если выдано впервые, иначе None"""
         cursor = await self.conn.execute(
             "SELECT 1 FROM user_achievements WHERE user_id = ? AND achievement_code = ?",
             (user_id, code)
@@ -296,7 +308,6 @@ class Database:
             rows = await cursor.fetchall()
         return [{"code": r[0], "name": r[1], "icon": r[2], "awarded_at": r[3]} for r in rows]
 
-    # ========== СЕРИИ И ПРОГРЕСС ==========
     async def update_sleep_streak(self, user_id: int, hours_slept: float = None):
         cursor = await self.conn.execute(
             "SELECT date FROM sleep WHERE user_id = ? ORDER BY date DESC",
@@ -328,7 +339,6 @@ class Database:
                 total_sleeps = excluded.total_sleeps,
                 last_sleep_date = excluded.last_sleep_date
         """, (user_id, streak, total, rows[0][0]))
-        # Проверка достижений
         if total == 1:
             await self.award_achievement(user_id, "first_sleep")
         if streak >= 3:
@@ -376,7 +386,6 @@ class Database:
         await self.conn.commit()
         return streak
 
-    # ========== СТАРЫЕ МЕТОДЫ (сохранены все, но с SQLite) ==========
     async def get_user_profile(self, user_id):
         cursor = await self.conn.execute(
             "SELECT age, height, weight FROM users WHERE user_id = ?",
@@ -388,12 +397,10 @@ class Database:
         return {"age": 0, "height": 0, "weight": 0}
 
     async def update_user_profile(self, user_id, age=None, height=None, weight=None):
-        # Сначала убедимся, что запись пользователя существует
         await self.conn.execute("""
             INSERT OR IGNORE INTO users (user_id, timezone_offset, created_at)
             VALUES (?, 0, ?)
         """, (user_id, datetime.now()))
-        # Теперь обновляем нужные поля
         if age is not None:
             await self.conn.execute("UPDATE users SET age = ? WHERE user_id = ?", (age, user_id))
         if height is not None:
@@ -466,7 +473,6 @@ class Database:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (user_id, date_today, datetime.now(), bed_time, wake_time, quality, 1 if woke_night else 0, note))
         await self.conn.commit()
-        # Рассчёт часов сна для достижения sleep_7_days
         try:
             bed = datetime.strptime(bed_time, "%H:%M")
             wake = datetime.strptime(wake_time, "%H:%M")
@@ -671,20 +677,17 @@ class Database:
         return cursor.rowcount > 0
 
     async def get_stats(self, user_id):
-        # counts
         sleep_count = (await self.conn.execute_fetchone("SELECT COUNT(*) FROM sleep WHERE user_id = ?", (user_id,)))[0] or 0
         checkins_count = (await self.conn.execute_fetchone("SELECT COUNT(*) FROM checkins WHERE user_id = ?", (user_id,)))[0] or 0
         food_count = (await self.conn.execute_fetchone("SELECT COUNT(*) FROM food WHERE user_id = ?", (user_id,)))[0] or 0
         drinks_count = (await self.conn.execute_fetchone("SELECT COUNT(*) FROM drinks WHERE user_id = ?", (user_id,)))[0] or 0
         notes_count = (await self.conn.execute_fetchone("SELECT COUNT(*) FROM notes WHERE user_id = ?", (user_id,)))[0] or 0
         reminders_count = (await self.conn.execute_fetchone("SELECT COUNT(*) FROM reminders WHERE user_id = ? AND is_active = 1", (user_id,)))[0] or 0
-        # last sleep
         cursor = await self.conn.execute(
             "SELECT bed_time, wake_time, quality FROM sleep WHERE user_id = ? ORDER BY id DESC LIMIT 1",
             (user_id,)
         )
         last_sleep = await cursor.fetchone()
-        # last checkin
         cursor = await self.conn.execute(
             "SELECT energy, stress, emotions FROM checkins WHERE user_id = ? ORDER BY id DESC LIMIT 1",
             (user_id,)
@@ -718,49 +721,40 @@ class Database:
             "notes": [],
             "reminders": []
         }
-        # sleep
         cursor = await self.conn.execute("SELECT date, bed_time, wake_time, quality, woke_night, note FROM sleep WHERE user_id = ?", (user_id,))
         rows = await cursor.fetchall()
         for r in rows:
             export_data["sleep"].append({"date": r[0], "bed_time": r[1], "wake_time": r[2], "quality": r[3], "woke_night": bool(r[4]), "note": r[5]})
-        # checkins
         cursor = await self.conn.execute("SELECT date, time, time_slot, energy, stress, emotions, note FROM checkins WHERE user_id = ?", (user_id,))
         rows = await cursor.fetchall()
         for r in rows:
             export_data["checkins"].append({"date": r[0], "time": r[1], "time_slot": r[2], "energy": r[3], "stress": r[4], "emotions": json.loads(r[5]) if r[5] else [], "note": r[6]})
-        # day_summary
         cursor = await self.conn.execute("SELECT date, score, best, worst, gratitude, note FROM day_summary WHERE user_id = ?", (user_id,))
         rows = await cursor.fetchall()
         for r in rows:
             export_data["day_summary"].append({"date": r[0], "score": r[1], "best": r[2], "worst": r[3], "gratitude": r[4], "note": r[5]})
-        # food
         cursor = await self.conn.execute("SELECT date, time, meal_type, food_text FROM food WHERE user_id = ?", (user_id,))
         rows = await cursor.fetchall()
         for r in rows:
             export_data["food"].append({"date": r[0], "time": r[1], "meal_type": r[2], "food_text": r[3]})
-        # drinks
         cursor = await self.conn.execute("SELECT date, time, drink_type, amount FROM drinks WHERE user_id = ?", (user_id,))
         rows = await cursor.fetchall()
         for r in rows:
             export_data["drinks"].append({"date": r[0], "time": r[1], "drink_type": r[2], "amount": r[3]})
-        # notes
         cursor = await self.conn.execute("SELECT text, date, time FROM notes WHERE user_id = ?", (user_id,))
         rows = await cursor.fetchall()
         for r in rows:
             export_data["notes"].append({"text": r[0], "date": r[1], "time": r[2]})
-        # reminders (active only)
         cursor = await self.conn.execute("SELECT text, date, time, advance_type, parent_id, is_custom FROM reminders WHERE user_id = ? AND is_active = 1", (user_id,))
         rows = await cursor.fetchall()
         for r in rows:
             export_data["reminders"].append({"text": r[0], "date": r[1], "time": r[2], "advance_type": r[3], "parent_id": r[4], "is_custom": bool(r[5])})
-
         file_path = os.path.join("data", str(user_id), "export_all.json")
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(export_data, f, ensure_ascii=False, indent=2)
         return file_path
 
-    # Вспомогательный метод для _load_json (используется в ai_advice.py и др.)
     async def _load_json(self, user_id, filename):
         if filename == "sleep.json":
             cursor = await self.conn.execute("SELECT date, bed_time, wake_time, quality, woke_night, note FROM sleep WHERE user_id = ?", (user_id,))
