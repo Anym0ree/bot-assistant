@@ -8,6 +8,9 @@ from keyboards import get_main_menu
 
 logger = logging.getLogger(__name__)
 
+# ФОРСИРОВАННЫЙ ЛОГ ПРИ ЗАГРУЗКЕ МОДУЛЯ
+logging.error("!!! STATS_EXPORT MODULE LOADED !!!")
+
 async def get_stats_data(user_id, days):
     tz = await db.get_user_timezone(user_id)
     if tz == 0:
@@ -165,7 +168,7 @@ async def stats_menu(message: types.Message):
     await message.answer("📊 Выбери период:", reply_markup=kb)
 
 async def stats_callback_handler(callback_query: types.CallbackQuery):
-    logger.info(f"🔔 Получен callback: {callback_query.data} от user {callback_query.from_user.id}")
+    logging.error(f"🔥🔥🔥 STATS CALLBACK RECEIVED: {callback_query.data} from {callback_query.from_user.id}")
     user_id = callback_query.from_user.id
     data = callback_query.data
     await callback_query.answer()
@@ -196,5 +199,6 @@ async def stats(message: types.Message):
     await stats_menu(message)
 
 def register(dp: Dispatcher):
+    logging.error("!!! REGISTERING STATS HANDLERS !!!")
     dp.register_message_handler(stats, text="📊 Статистика", state="*")
     dp.register_callback_query_handler(stats_callback_handler, lambda c: c.data.startswith('stats_'))
