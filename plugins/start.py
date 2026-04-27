@@ -60,7 +60,7 @@ async def cmd_menu(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("Главное меню", reply_markup=get_main_menu())
 
-# ========== ПРОФИЛЬ ==========
+# ========== ПРОФИЛЬ (функции экспортируются для использования в settings.py) ==========
 async def profile_age(message: types.Message, state: FSMContext):
     if message.text == "⬅️ Назад":
         await safe_finish(state, message)
@@ -108,7 +108,7 @@ async def profile_weight(message: types.Message, state: FSMContext):
     except ValueError:
         await message.answer("❌ Введи число. Какой у тебя вес в кг?")
 
-# ========== ЧАСОВОЙ ПОЯС ==========
+# ========== ЧАСОВОЙ ПОЯС (функции экспортируются для settings.py) ==========
 async def timezone_city(message: types.Message, state: FSMContext):
     if message.text in ("❌ Отмена", "⬅️ Назад"):
         await safe_finish(state, message)
@@ -179,6 +179,7 @@ async def reminder_setup_mode(message: types.Message, state: FSMContext):
         await show_main_menu(message)
     elif message.text == "✏️ Настроить вручную":
         await state.finish()
+        # Импортируем функцию reminder_settings_menu из settings.py
         from plugins.settings import reminder_settings_menu
         await reminder_settings_menu(message)
     else:
