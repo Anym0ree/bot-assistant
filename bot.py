@@ -51,29 +51,70 @@ def load_plugins(dispatcher, plugins_dir="plugins"):
 
 # ========== ЕДИНАЯ СИСТЕМА НАПОМИНАНИЙ ==========
 async def check_all_reminders():
-    """Проверяет все напоминания (обычные и периодические)"""
     try:
         now_utc = datetime.utcnow()
         
-        # 1. Обычные напоминания из БД (с remind_utc)
+        # 1. Обычные напоминания
         reminders_due = await db.get_reminders_due_now()
         for user_id, rem in reminders_due:
+            # Настройки пользователя
+            cur = await db.conn.execute(
+                "SELECT reminders_enabled, do_not_disturb_start, do_not_disturb_end FROM user_settings WHERE user_id = ?",
+                (user_id,)
+            )
+            row = await cur.fetchone()
+            if not row:
+                rem_enabled = 1
+                dnd_start = dnd_end = None
+            else:
+                rem_enabled, dnd_start, dnd_end = row
+            if not rem_enabled:
+                continue
+            # Тихий час
+            tz = await db.get_user_timezone(user_id)
+            if tz == 0: tz = 3
+            user_time = now_utc + timedelta(hours=tz)
+            current_time = user_time.strftime("%H:%M")
+            if dnd_start and dnd_end:
+                if dnd_start <= dnd_end:
+                    if dnd_start <= current_time <= dnd_end:
+                        continue
+                else:
+                    if current_time >= dnd_start or current_time <= dnd_end:
+                        continue
             try:
                 await bot.send_message(user_id, f"⏰ НАПОМИНАНИЕ!\n\n{rem['text']}")
                 await db.mark_reminder_sent(user_id, rem['id'])
-                logging.info(f"✅ Отправлено напоминание {rem['id']} пользователю {user_id}")
             except Exception as e:
-                logging.error(f"Ошибка отправки напоминания {rem['id']}: {e}")
+                logging.error(f"Ошибка отправки {rem['id']}: {e}")
 
         # 2. Периодические напоминания (из user_reminder_settings)
         async with db.conn.execute("SELECT DISTINCT user_id FROM users") as cursor:
             users = await cursor.fetchall()
         for (user_id,) in users:
+            cur = await db.conn.execute(
+                "SELECT reminders_enabled, do_not_disturb_start, do_not_disturb_end FROM user_settings WHERE user_id = ?",
+                (user_id,)
+            )
+            row = await cur.fetchone()
+            if not row:
+                rem_enabled = 1
+                dnd_start = dnd_end = None
+            else:
+                rem_enabled, dnd_start, dnd_end = row
+            if not rem_enabled:
+                continue
             tz = await db.get_user_timezone(user_id)
-            if tz == 0:
-                tz = 3
+            if tz == 0: tz = 3
             user_time = now_utc + timedelta(hours=tz)
             current_time = user_time.strftime("%H:%M")
+            if dnd_start and dnd_end:
+                if dnd_start <= dnd_end:
+                    if dnd_start <= current_time <= dnd_end:
+                        continue
+                else:
+                    if current_time >= dnd_start or current_time <= dnd_end:
+                        continue
             today_str = user_time.strftime("%Y-%m-%d")
             
             sleep_set = await db.get_reminder_setting(user_id, "sleep")
@@ -84,8 +125,7 @@ async def check_all_reminders():
             check_set = await db.get_reminder_setting(user_id, "checkins")
             if check_set["enabled"] and current_time in check_set["times"]:
                 checkins = await db._load_json(user_id, "checkins.json")
-                has_today = any(c.get("date") == today_str for c in checkins)
-                if not has_today:
+                if not any(c.get("date") == today_str for c in checkins):
                     await bot.send_message(user_id, "⚡️ Сделай чек-ин")
             
             summary_set = await db.get_reminder_setting(user_id, "summary")
@@ -97,8 +137,7 @@ async def check_all_reminders():
             water_set = await db.get_reminder_setting(user_id, "water")
             if water_set["enabled"] and current_time in water_set["times"]:
                 items = await db.get_today_food_and_drinks(user_id)
-                water_drunk = any("вода" in d['text'].lower() for d in items if d['type'] == "🥤 Напитки")
-                if not water_drunk:
+                if not any("вода" in d['text'].lower() for d in items if d['type'] == "🥤 Напитки"):
                     await bot.send_message(user_id, "💧 Не забывай пить воду!")
             
             meals_set = await db.get_reminder_setting(user_id, "meals")
@@ -106,13 +145,10 @@ async def check_all_reminders():
                 meal_names = {"09:00": "завтрак", "13:00": "обед", "19:00": "ужин"}
                 meal_name = meal_names.get(current_time, "приём пищи")
                 items = await db.get_today_food_and_drinks(user_id)
-                has_meal = any(meal_name in f['text'].lower() for f in items if f['type'] == "🍽 Еда")
-                if not has_meal:
+                if not any(meal_name in f['text'].lower() for f in items if f['type'] == "🍽 Еда"):
                     await bot.send_message(user_id, f"🍽 Пора {meal_name}! Добавь запись о еде.")
-                    
     except Exception as e:
-        logging.error(f"❌ Ошибка в check_all_reminders: {e}", exc_info=True)
-
+        logging.error(f"Ошибка в check_all_reminders: {e}", exc_info=True)
 # ========== ЗАПУСК ==========
 async def on_startup_polling(dp):
     await bot.delete_webhook()
