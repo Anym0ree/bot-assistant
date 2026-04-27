@@ -388,6 +388,12 @@ class Database:
         return {"age": 0, "height": 0, "weight": 0}
 
     async def update_user_profile(self, user_id, age=None, height=None, weight=None):
+        # Сначала убедимся, что запись пользователя существует
+        await self.conn.execute("""
+            INSERT OR IGNORE INTO users (user_id, timezone_offset, created_at)
+            VALUES (?, 0, ?)
+        """, (user_id, datetime.now()))
+        # Теперь обновляем нужные поля
         if age is not None:
             await self.conn.execute("UPDATE users SET age = ? WHERE user_id = ?", (age, user_id))
         if height is not None:

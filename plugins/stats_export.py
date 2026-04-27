@@ -64,37 +64,43 @@ def plot_stats(data_df, period_name):
     return buf
 
 async def get_stats_data(user_id, days=30):
+    """Получает данные за указанное количество дней без использования pool"""
     tz = await db.get_user_timezone(user_id)
     if tz == 0:
         tz = 3
     now_local = datetime.utcnow() + timedelta(hours=tz)
     start_date = (now_local - timedelta(days=days)).date()
-    async with db.pool.acquire() as conn:
-        sleep_rows = await conn.fetch(
-            "SELECT date, bed_time, wake_time FROM sleep WHERE user_id = $1 AND date >= $2",
-            user_id, start_date.strftime("%Y-%m-%d")
-        )
-        checkin_rows = await conn.fetch(
-            "SELECT date, energy, stress FROM checkins WHERE user_id = $1 AND date >= $2",
-            user_id, start_date.strftime("%Y-%m-%d")
-        )
-        summary_rows = await conn.fetch(
-            "SELECT date, score FROM day_summary WHERE user_id = $1 AND date >= $2",
-            user_id, start_date.strftime("%Y-%m-%d")
-        )
+    start_date_str = start_date.strftime("%Y-%m-%d")
+    
+    # Запросы через прямые вызовы db.conn.execute
+    sleep_rows = await db.conn.execute_fetchall(
+        "SELECT date, bed_time, wake_time FROM sleep WHERE user_id = ? AND date >= ?",
+        (user_id, start_date_str)
+    )
+    checkin_rows = await db.conn.execute_fetchall(
+        "SELECT date, energy, stress FROM checkins WHERE user_id = ? AND date >= ?",
+        (user_id, start_date_str)
+    )
+    summary_rows = await db.conn.execute_fetchall(
+        "SELECT date, score FROM day_summary WHERE user_id = ? AND date >= ?",
+        (user_id, start_date_str)
+    )
+    
     sleep_data = []
     for r in sleep_rows:
-        bed = datetime.strptime(r['bed_time'], "%H:%M")
-        wake = datetime.strptime(r['wake_time'], "%H:%M")
+        bed = datetime.strptime(r[1], "%H:%M")
+        wake = datetime.strptime(r[2], "%H:%M")
         hours = (wake - bed).seconds / 3600
         if hours < 0:
             hours += 24
-        sleep_data.append({'date': r['date'], 'sleep_hours': hours})
-    checkin_data = [{'date': r['date'], 'energy': r['energy'], 'stress': r['stress']} for r in checkin_rows]
-    summary_data = [{'date': r['date'], 'day_score': r['score']} for r in summary_rows]
+        sleep_data.append({'date': r[0], 'sleep_hours': hours})
+    checkin_data = [{'date': r[0], 'energy': r[1], 'stress': r[2]} for r in checkin_rows]
+    summary_data = [{'date': r[0], 'day_score': r[1]} for r in summary_rows]
+    
     df_sleep = pd.DataFrame(sleep_data)
     df_check = pd.DataFrame(checkin_data)
     df_sum = pd.DataFrame(summary_data)
+    
     all_dates = set()
     for df in [df_sleep, df_check, df_sum]:
         if not df.empty:
