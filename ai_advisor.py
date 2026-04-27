@@ -187,6 +187,8 @@ class AIAdvisor:
                     if resp.status == 200:
                         result = await resp.json()
                         content = result["choices"][0]["message"]["content"]
+                        if content is None:
+                            return "⚠️ AI вернул пустой ответ. Попробуйте позже."
                         content = content.replace('*', '').replace('_', '').replace('`', '').replace('~', '').replace('#', '').replace('>', '')
                         return content
                     else:
@@ -251,6 +253,8 @@ class AIAdvisor:
                     if resp.status == 200:
                         result = await resp.json()
                         content = result["choices"][0]["message"]["content"]
+                        if content is None:
+                            return "⚠️ AI вернул пустой ответ."
                         content = content.replace('*', '').replace('_', '').replace('`', '')
                         return f"📅 *Анализ дня {date_str}*\n\n{content}"
                     else:
@@ -296,11 +300,14 @@ class AIAdvisor:
                     if resp.status == 200:
                         result = await resp.json()
                         content = result["choices"][0]["message"]["content"]
+                        if content is None:
+                            return "⚠️ AI вернул пустой ответ."
                         content = content.replace('*', '').replace('_', '').replace('`', '')
                         return content
                     else:
                         return "⚠️ Ошибка AI. Попробуй позже."
             except Exception as e:
+                logger.error(f"AI advice error: {e}")
                 return "⚠️ Ошибка связи с AI."
 
 ai_advisor = None
