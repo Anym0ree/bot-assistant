@@ -1,15 +1,12 @@
 import logging
 from datetime import datetime, timedelta
 from aiogram import Dispatcher, types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.dispatcher import FSMContext
 
 from database import db
-from keyboards import get_main_menu
+from keyboards import get_main_menu, get_stats_period_keyboard
 
 logger = logging.getLogger(__name__)
-
-# ФОРСИРОВАННЫЙ ЛОГ ПРИ ЗАГРУЗКЕ МОДУЛЯ
-logging.error("!!! STATS_EXPORT MODULE LOADED !!!")
 
 async def get_stats_data(user_id, days):
     tz = await db.get_user_timezone(user_id)
@@ -157,48 +154,44 @@ async def format_stats_text(stats):
         text += "• Отличная работа! Продолжай в том же духе 💪\n"
     return text
 
-async def stats_menu(message: types.Message):
-    kb = InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        InlineKeyboardButton("📅 Неделя", callback_data="stats_week"),
-        InlineKeyboardButton("📆 Месяц", callback_data="stats_month"),
-        InlineKeyboardButton("📄 Полная статистика", callback_data="stats_text"),
-        InlineKeyboardButton("⬅️ Назад", callback_data="stats_back")
+async def stats_menu(message: types.Message, state: FSMContext):
+    await state.finish()
+    await message.answer(
+        "📊 Выбери период для статистики:",
+        reply_markup=get_stats_period_keyboard()
     )
-    await message.answer("📊 Выбери период:", reply_markup=kb)
 
-async def stats_callback_handler(callback_query: types.CallbackQuery):
-    logging.error(f"🔥🔥🔥 STATS CALLBACK RECEIVED: {callback_query.data} from {callback_query.from_user.id}")
-    user_id = callback_query.from_user.id
-    data = callback_query.data
-    await callback_query.answer()
-    if data == "stats_back":
-        await callback_query.message.delete()
-        await callback_query.message.answer("Главное меню", reply_markup=get_main_menu())
-        return
-    if data == "stats_text":
-        text = await db.get_stats(user_id)
-        await callback_query.message.answer(text, reply_markup=get_main_menu())
-        await callback_query.message.delete()
-        return
-    if data == "stats_week":
-        days = 7
-    elif data == "stats_month":
-        days = 30
-    else:
-        await callback_query.message.answer("Неизвестный выбор")
-        return
-    msg = await callback_query.message.answer("⏳ Собираю данные...")
-    stats = await get_stats_data(user_id, days)
+async def stats_week(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    await state.finish()
+    msg = await message.answer("⏳ Собираю данные...")
+    stats = await get_stats_data(user_id, 7)
     text = await format_stats_text(stats)
     await msg.delete()
-    await callback_query.message.answer(text, parse_mode="Markdown", reply_markup=get_main_menu())
-    await callback_query.message.delete()
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_main_menu())
 
-async def stats(message: types.Message):
-    await stats_menu(message)
+async def stats_month(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    await state.finish()
+    msg = await message.answer("⏳ Собираю данные...")
+    stats = await get_stats_data(user_id, 30)
+    text = await format_stats_text(stats)
+    await msg.delete()
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_main_menu())
+
+async def stats_total(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    await state.finish()
+    text = await db.get_stats(user_id)
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_main_menu())
+
+async def cancel_stats(message: types.Message, state: FSMContext):
+    await state.finish()
+    await message.answer("Главное меню", reply_markup=get_main_menu())
 
 def register(dp: Dispatcher):
-    logging.error("!!! REGISTERING STATS HANDLERS !!!")
-    dp.register_message_handler(stats, text="📊 Статистика", state="*")
-    dp.register_callback_query_handler(stats_callback_handler, lambda c: c.data.startswith('stats_'))
+    dp.register_message_handler(stats_menu, text="📊 Статистика", state="*")
+    dp.register_message_handler(stats_week, text="📅 Неделя", state="*")
+    dp.register_message_handler(stats_month, text="📆 Месяц", state="*")
+    dp.register_message_handler(stats_total, text="📊 Вся статистика", state="*")
+    dp.register_message_handler(cancel_stats, text="⬅️ Назад", state="*")
