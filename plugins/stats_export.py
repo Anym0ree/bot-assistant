@@ -1,10 +1,12 @@
 import logging
 from datetime import datetime, timedelta
 from aiogram import Dispatcher, types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 from database import db
 from keyboards import get_main_menu
+
+logger = logging.getLogger(__name__)
 
 async def get_stats_data(user_id, days):
     tz = await db.get_user_timezone(user_id)
@@ -79,8 +81,10 @@ async def get_stats_data(user_id, days):
         "max_sleep": max_sleep,
         "min_sleep": min_sleep,
         "avg_quality": avg_quality,
+        "checkin_count": len(checkin_rows),
         "avg_energy": avg_energy,
         "avg_stress": avg_stress,
+        "summary_count": len(summary_rows),
         "avg_score": avg_score,
         "water_liters": water_liters,
         "new_achievements": new_achievements,
@@ -112,7 +116,7 @@ async def format_stats_text(stats):
             text += f"   • 🔥 Серия: {stats['sleep_streak']} дней\n"
 
     text += "\n⚡️ *Энергия и стресс*\n"
-    if stats.get("checkin_count", 0) == 0:
+    if stats["checkin_count"] == 0:
         text += "   • Нет чек-инов\n"
     else:
         energy_text = "🔋 (низкая)\n" if stats['avg_energy'] < 5 else "✅\n"
@@ -123,7 +127,7 @@ async def format_stats_text(stats):
             text += f"   • 🔥 Серия чек-инов: {stats['checkin_streak']} дней\n"
 
     text += "\n📝 *Оценка дня*\n"
-    if stats.get("summary_count", 0) == 0:
+    if stats["summary_count"] == 0:
         text += "   • Нет итогов\n"
     else:
         text += f"   • Средняя оценка: {stats['avg_score']:.1f}/10\n"
@@ -141,10 +145,10 @@ async def format_stats_text(stats):
     if stats['avg_sleep'] < 7 and stats['sleep_count'] > 0:
         text += "• Ложись спать на 30 минут раньше\n"
         rec += 1
-    if stats['avg_energy'] < 5 and stats.get('checkin_count', 0) > 0:
+    if stats['avg_energy'] < 5 and stats['checkin_count'] > 0:
         text += "• Добавь фрукты и овощи, пей воду\n"
         rec += 1
-    if stats['avg_stress'] > 6 and stats.get('checkin_count', 0) > 0:
+    if stats['avg_stress'] > 6 and stats['checkin_count'] > 0:
         text += "• Попробуй медитацию или дыхательные упражнения\n"
         rec += 1
     if stats['water_liters']/stats['days'] < 2:
@@ -164,35 +168,37 @@ async def stats_menu(message: types.Message):
     )
     await message.answer("📊 Выбери период:", reply_markup=keyboard)
 
-async def stats_callback_handler(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    data = callback_query.data
-    await callback_query.answer()
+async def stats_callback_handler(call: CallbackQuery):
+    logger.info(f"Получен callback: {call.data} от пользователя {call.from_user.id}")
+    user_id = call.from_user.id
+    data = call.data
+    await call.answer()
     if data == "stats_back":
-        await callback_query.message.delete()
-        await callback_query.message.answer("Главное меню", reply_markup=get_main_menu())
+        await call.message.delete()
+        await call.message.answer("Главное меню", reply_markup=get_main_menu())
         return
     if data == "stats_text":
         text = await db.get_stats(user_id)
-        await callback_query.message.answer(text, reply_markup=get_main_menu())
-        await callback_query.message.delete()
+        await call.message.answer(text, reply_markup=get_main_menu())
+        await call.message.delete()
         return
     if data == "stats_week":
         days = 7
     elif data == "stats_month":
         days = 30
     else:
+        await call.message.answer("Неизвестный выбор")
         return
-    msg = await callback_query.message.answer("⏳ Собираю данные...")
+    msg = await call.message.answer("⏳ Собираю данные...")
     stats = await get_stats_data(user_id, days)
     text = await format_stats_text(stats)
     await msg.delete()
-    await callback_query.message.answer(text, parse_mode="Markdown", reply_markup=get_main_menu())
-    await callback_query.message.delete()
+    await call.message.answer(text, parse_mode="Markdown", reply_markup=get_main_menu())
+    await call.message.delete()
 
 async def stats(message: types.Message):
     await stats_menu(message)
 
 def register(dp: Dispatcher):
     dp.register_message_handler(stats, text="📊 Статистика", state="*")
-    dp.register_callback_query_handler(stats_callback_handler, lambda c: c.data.startswith('stats_'))
+    dp.register_callback_query_handler(stats_callback_handler, lambda c: c.data and c.data.startswith('stats_'), state="*")
