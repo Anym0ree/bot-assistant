@@ -25,7 +25,7 @@ async def ai_advice_start(message: types.Message, state: FSMContext):
     # Проверка настройки AI
     async with db.pool.acquire() as conn:
         row = await conn.fetchrow("SELECT ai_enabled FROM user_settings WHERE user_id = $1", user_id)
-        ai_enabled = row['ai_enabled'] if row else 1
+    ai_enabled = row['ai_enabled'] if row else 1
     if not ai_enabled:
         await message.answer("🤖 AI-совет отключён в настройках. Включи его в разделе ⚙️ Настройки.")
         return
@@ -150,7 +150,7 @@ async def ai_question(message: types.Message, state: FSMContext):
         await thinking_msg.delete()
         await message.answer("❌ AI-модуль недоступен.")
 
-# ========== ПРОФИЛЬ ==========
+# ========== ПРОФИЛЬ (если вызывается из AI) ==========
 async def profile_age(message: types.Message, state: FSMContext):
     if message.text == "⬅️ Назад":
         await state.finish()
