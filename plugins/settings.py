@@ -8,8 +8,6 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 from database import db
 from keyboards import get_main_menu
 
-logger = logging.getLogger(__name__)
-
 class DNDStates(StatesGroup):
     waiting_start = State()
     waiting_end = State()
@@ -23,30 +21,26 @@ async def settings_menu(message: types.Message, state: FSMContext = None):
     if state:
         await state.finish()
     user_id = message.from_user.id
-
     async with db.pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT ai_enabled, reminders_enabled, daily_surveys_enabled, weekly_report_enabled, do_not_disturb_start, do_not_disturb_end FROM user_settings WHERE user_id = $1",
             user_id
         )
-        if not row:
+    if not row:
+        async with db.pool.acquire() as conn:
             await conn.execute("INSERT INTO user_settings (user_id) VALUES ($1)", user_id)
-            ai_enabled = reminders_enabled = daily_surveys_enabled = weekly_report_enabled = 1
-            dnd_start = dnd_end = None
-        else:
-            ai_enabled = row['ai_enabled']
-            reminders_enabled = row['reminders_enabled']
-            daily_surveys_enabled = row['daily_surveys_enabled']
-            weekly_report_enabled = row['weekly_report_enabled']
-            dnd_start = row['do_not_disturb_start']
-            dnd_end = row['do_not_disturb_end']
-
-    # Получаем профиль
-    profile = await db.get_user_profile(user_id)
-    if profile['age']:
-        profile_text = f"👤 Профиль: {profile['age']} лет, {profile['height']} см, {profile['weight']} кг"
+        ai_enabled = reminders_enabled = daily_surveys_enabled = weekly_report_enabled = 1
+        dnd_start = dnd_end = None
     else:
-        profile_text = "👤 Профиль не заполнен"
+        ai_enabled = row['ai_enabled']
+        reminders_enabled = row['reminders_enabled']
+        daily_surveys_enabled = row['daily_surveys_enabled']
+        weekly_report_enabled = row['weekly_report_enabled']
+        dnd_start = row['do_not_disturb_start']
+        dnd_end = row['do_not_disturb_end']
+
+    profile = await db.get_user_profile(user_id)
+    profile_text = f"👤 Профиль: {profile['age']} лет, {profile['height']} см, {profile['weight']} кг" if profile['age'] else "👤 Профиль не заполнен"
 
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
@@ -81,34 +75,34 @@ async def settings_callback(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    async def toggle_setting(setting_name):
+    async def toggle(setting):
         async with db.pool.acquire() as conn:
-            row = await conn.fetchrow(f"SELECT {setting_name} FROM user_settings WHERE user_id = $1", user_id)
-            current = row[setting_name] if row else 1
+            row = await conn.fetchrow(f"SELECT {setting} FROM user_settings WHERE user_id = $1", user_id)
+            current = row[0] if row else 1
             new_val = 0 if current else 1
             await conn.execute(f"""
-                INSERT INTO user_settings (user_id, {setting_name}) VALUES ($1, $2)
-                ON CONFLICT (user_id) DO UPDATE SET {setting_name} = $2
+                INSERT INTO user_settings (user_id, {setting}) VALUES ($1, $2)
+                ON CONFLICT (user_id) DO UPDATE SET {setting} = $2
             """, user_id, new_val)
         return new_val
 
     if data == "set_ai":
-        new_val = await toggle_setting("ai_enabled")
+        new_val = await toggle("ai_enabled")
         await callback.answer(f"AI-совет {'включён' if new_val else 'выключен'}")
         await settings_menu(callback.message, state)
         await callback.message.delete()
     elif data == "set_reminders":
-        new_val = await toggle_setting("reminders_enabled")
+        new_val = await toggle("reminders_enabled")
         await callback.answer(f"Напоминания {'включены' if new_val else 'выключены'}")
         await settings_menu(callback.message, state)
         await callback.message.delete()
     elif data == "set_surveys":
-        new_val = await toggle_setting("daily_surveys_enabled")
+        new_val = await toggle("daily_surveys_enabled")
         await callback.answer(f"Опросники {'включены' if new_val else 'выключены'}")
         await settings_menu(callback.message, state)
         await callback.message.delete()
     elif data == "set_reports":
-        new_val = await toggle_setting("weekly_report_enabled")
+        new_val = await toggle("weekly_report_enabled")
         await callback.answer(f"Отчёты {'включены' if new_val else 'выключены'}")
         await settings_menu(callback.message, state)
         await callback.message.delete()
@@ -207,11 +201,7 @@ async def dnd_end(message: types.Message, state: FSMContext):
 
 def register(dp: Dispatcher):
     dp.register_message_handler(settings_menu, text="⚙️ Настройки", state="*")
-    dp.register_callback_query_handler(
-        settings_callback,
-        lambda c: c.data.startswith(('set_', 'edit_profile', 'settings_back')),
-        state="*"
-    )
+    dp.register_callback_query_handler(settings_callback, lambda c: c.data.startswith(('set_', 'edit_profile', 'settings_back')), state="*")
     dp.register_message_handler(profile_age, state=ProfileEditStates.age, content_types=types.ContentTypes.TEXT)
     dp.register_message_handler(profile_height, state=ProfileEditStates.height, content_types=types.ContentTypes.TEXT)
     dp.register_message_handler(profile_weight, state=ProfileEditStates.weight, content_types=types.ContentTypes.TEXT)
