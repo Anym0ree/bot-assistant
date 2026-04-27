@@ -15,55 +15,53 @@ async def get_stats_data(user_id, days):
     now_local = datetime.utcnow() + timedelta(hours=tz)
     start_date = (now_local - timedelta(days=days)).strftime("%Y-%m-%d")
 
-    sleep_rows = await db.conn.execute_fetchall(
-        "SELECT date, bed_time, wake_time, quality FROM sleep WHERE user_id = ? AND date >= ?",
-        (user_id, start_date)
-    )
+    async with db.pool.acquire() as conn:
+        sleep_rows = await conn.fetch(
+            "SELECT date, bed_time, wake_time, quality FROM sleep WHERE user_id = $1 AND date >= $2",
+            user_id, start_date
+        )
+        checkin_rows = await conn.fetch(
+            "SELECT date, energy, stress FROM checkins WHERE user_id = $1 AND date >= $2",
+            user_id, start_date
+        )
+        summary_rows = await conn.fetch(
+            "SELECT date, score FROM day_summary WHERE user_id = $1 AND date >= $2",
+            user_id, start_date
+        )
+        water_rows = await conn.fetch(
+            "SELECT amount FROM drinks WHERE user_id = $1 AND date >= $2 AND (drink_type = '💧 Вода' OR amount LIKE '%вода%')",
+            user_id, start_date
+        )
+        ach_rows = await conn.fetch(
+            "SELECT COUNT(*) FROM user_achievements WHERE user_id = $1 AND awarded_at >= $2",
+            user_id, start_date
+        )
+        stats_row = await conn.fetchrow(
+            "SELECT sleep_streak, checkin_streak FROM user_stats WHERE user_id = $1",
+            user_id
+        )
+
     sleep_hours = []
     sleep_qualities = []
     for row in sleep_rows:
         try:
-            bed = datetime.strptime(row[1], "%H:%M")
-            wake = datetime.strptime(row[2], "%H:%M")
+            bed = datetime.strptime(row['bed_time'], "%H:%M")
+            wake = datetime.strptime(row['wake_time'], "%H:%M")
             hours = (wake - bed).seconds / 3600
             if hours < 0:
                 hours += 24
             sleep_hours.append(hours)
-            sleep_qualities.append(row[3])
+            sleep_qualities.append(row['quality'])
         except:
             pass
 
-    checkin_rows = await db.conn.execute_fetchall(
-        "SELECT date, energy, stress FROM checkins WHERE user_id = ? AND date >= ?",
-        (user_id, start_date)
-    )
-    energies = [r[1] for r in checkin_rows]
-    stresses = [r[2] for r in checkin_rows]
-
-    summary_rows = await db.conn.execute_fetchall(
-        "SELECT date, score FROM day_summary WHERE user_id = ? AND date >= ?",
-        (user_id, start_date)
-    )
-    scores = [r[1] for r in summary_rows]
-
-    water_rows = await db.conn.execute_fetchall(
-        "SELECT amount FROM drinks WHERE user_id = ? AND date >= ? AND (drink_type = '💧 Вода' OR amount LIKE '%вода%')",
-        (user_id, start_date)
-    )
+    energies = [r['energy'] for r in checkin_rows]
+    stresses = [r['stress'] for r in checkin_rows]
+    scores = [r['score'] for r in summary_rows]
     water_liters = len(water_rows) * 0.5
-
-    achievements_rows = await db.conn.execute_fetchall(
-        "SELECT COUNT(*) FROM user_achievements WHERE user_id = ? AND awarded_at >= ?",
-        (user_id, start_date)
-    )
-    new_achievements = achievements_rows[0][0] if achievements_rows else 0
-
-    stats_row = await db.conn.execute_fetchone(
-        "SELECT sleep_streak, checkin_streak FROM user_stats WHERE user_id = ?",
-        (user_id,)
-    )
-    sleep_streak = stats_row[0] if stats_row else 0
-    checkin_streak = stats_row[1] if stats_row else 0
+    new_achievements = ach_rows[0][0] if ach_rows else 0
+    sleep_streak = stats_row['sleep_streak'] if stats_row else 0
+    checkin_streak = stats_row['checkin_streak'] if stats_row else 0
 
     avg_sleep = sum(sleep_hours)/len(sleep_hours) if sleep_hours else 0
     max_sleep = max(sleep_hours) if sleep_hours else 0
@@ -114,7 +112,7 @@ async def format_stats_text(stats):
             text += f"   • 🔥 Серия: {stats['sleep_streak']} дней\n"
 
     text += "\n⚡️ *Энергия и стресс*\n"
-    if not energies and stats["sleep_count"] > 0:
+    if stats.get("checkin_count", 0) == 0 and stats["sleep_count"] > 0:
         text += "   • Нет чек-инов\n"
     else:
         energy_text = "🔋 (низкая)\n" if stats['avg_energy'] < 5 else "✅\n"
@@ -125,7 +123,7 @@ async def format_stats_text(stats):
             text += f"   • 🔥 Серия чек-инов: {stats['checkin_streak']} дней\n"
 
     text += "\n📝 *Оценка дня*\n"
-    if not scores and stats["sleep_count"] > 0:
+    if stats.get("summary_count", 0) == 0 and stats["sleep_count"] > 0:
         text += "   • Нет итогов\n"
     else:
         text += f"   • Средняя оценка: {stats['avg_score']:.1f}/10\n"
@@ -143,10 +141,10 @@ async def format_stats_text(stats):
     if stats['avg_sleep'] < 7 and stats['sleep_count'] > 0:
         text += "• Ложись спать на 30 минут раньше\n"
         rec += 1
-    if stats['avg_energy'] < 5 and energies:
+    if stats['avg_energy'] < 5 and stats.get('checkin_count', 0) > 0:
         text += "• Добавь фрукты и овощи, пей воду\n"
         rec += 1
-    if stats['avg_stress'] > 6 and stresses:
+    if stats['avg_stress'] > 6 and stats.get('checkin_count', 0) > 0:
         text += "• Попробуй медитацию или дыхательные упражнения\n"
         rec += 1
     if stats['water_liters']/stats['days'] < 2:
@@ -157,21 +155,20 @@ async def format_stats_text(stats):
     return text
 
 async def stats_menu(message: types.Message):
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
         InlineKeyboardButton("📅 Неделя", callback_data="stats_week"),
         InlineKeyboardButton("📆 Месяц", callback_data="stats_month"),
         InlineKeyboardButton("📄 Полная статистика", callback_data="stats_text"),
         InlineKeyboardButton("⬅️ Назад", callback_data="stats_back")
     )
-    await message.answer("📊 Выбери период:", reply_markup=keyboard)
+    await message.answer("📊 Выбери период:", reply_markup=kb)
 
 async def stats_callback_handler(callback_query: types.CallbackQuery):
     logger.info(f"🔔 Получен callback: {callback_query.data} от user {callback_query.from_user.id}")
     user_id = callback_query.from_user.id
     data = callback_query.data
     await callback_query.answer()
-    
     if data == "stats_back":
         await callback_query.message.delete()
         await callback_query.message.answer("Главное меню", reply_markup=get_main_menu())
@@ -188,7 +185,6 @@ async def stats_callback_handler(callback_query: types.CallbackQuery):
     else:
         await callback_query.message.answer("Неизвестный выбор")
         return
-    
     msg = await callback_query.message.answer("⏳ Собираю данные...")
     stats = await get_stats_data(user_id, days)
     text = await format_stats_text(stats)
