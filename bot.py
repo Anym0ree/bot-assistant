@@ -51,6 +51,73 @@ def load_plugins(dispatcher, plugins_dir="plugins"):
 
 # ========== ЕДИНАЯ СИСТЕМА НАПОМИНАНИЙ ==========
 async def check_all_reminders():
+    """Проверяет все напоминания (обычные и периодические)"""
+    try:
+        now_utc = datetime.utcnow()
+        
+        # 1. Обычные напоминания из таблицы reminders (по remind_utc)
+        reminders_due = await db.get_reminders_due_now()
+        for user_id, rem in reminders_due:
+            try:
+                await bot.send_message(user_id, f"⏰ НАПОМИНАНИЕ!\n\n{rem['text']}")
+                await db.mark_reminder_sent(user_id, rem['id'])
+                logging.info(f"✅ Отправлено напоминание {rem['id']} пользователю {user_id}")
+            except Exception as e:
+                logging.error(f"Ошибка отправки напоминания {rem['id']}: {e}")
+
+        # 2. Периодические напоминания (из user_reminder_settings)
+        # Получаем список всех пользователей, у которых есть настройки
+        async with db.conn.execute("SELECT DISTINCT user_id FROM users") as cursor:
+            users = await cursor.fetchall()
+        for (user_id,) in users:
+            tz = await db.get_user_timezone(user_id)
+            if tz == 0:
+                tz = 3
+            user_time = now_utc + timedelta(hours=tz)
+            current_time = user_time.strftime("%H:%M")
+            today_str = user_time.strftime("%Y-%m-%d")
+            
+            # Сон
+            sleep_set = await db.get_reminder_setting(user_id, "sleep")
+            if sleep_set["enabled"] and sleep_set["times"] and sleep_set["times"][0] == current_time:
+                if not await db.has_sleep_today(user_id):
+                    await bot.send_message(user_id, "🛌 Пора записать сон")
+            
+            # Чек-ины
+            check_set = await db.get_reminder_setting(user_id, "checkins")
+            if check_set["enabled"] and current_time in check_set["times"]:
+                checkins = await db._load_json(user_id, "checkins.json")
+                has_today = any(c.get("date") == today_str for c in checkins)
+                if not has_today:
+                    await bot.send_message(user_id, "⚡️ Сделай чек-ин")
+            
+            # Итог дня
+            summary_set = await db.get_reminder_setting(user_id, "summary")
+            if summary_set["enabled"] and summary_set["times"] and summary_set["times"][0] == current_time:
+                target_date = await db.get_target_date_for_summary(user_id)
+                if target_date and not await db.has_day_summary_for_date(user_id, target_date):
+                    await bot.send_message(user_id, "📝 Не забудь подвести итог дня")
+            
+            # Вода
+            water_set = await db.get_reminder_setting(user_id, "water")
+            if water_set["enabled"] and current_time in water_set["times"]:
+                items = await db.get_today_food_and_drinks(user_id)
+                water_drunk = any("вода" in d['text'].lower() for d in items if d['type'] == "🥤 Напитки")
+                if not water_drunk:
+                    await bot.send_message(user_id, "💧 Не забывай пить воду!")
+            
+            # Еда
+            meals_set = await db.get_reminder_setting(user_id, "meals")
+            if meals_set["enabled"] and current_time in meals_set["times"]:
+                meal_names = {"09:00": "завтрак", "13:00": "обед", "19:00": "ужин"}
+                meal_name = meal_names.get(current_time, "приём пищи")
+                items = await db.get_today_food_and_drinks(user_id)
+                has_meal = any(meal_name in f['text'].lower() for f in items if f['type'] == "🍽 Еда")
+                if not has_meal:
+                    await bot.send_message(user_id, f"🍽 Пора {meal_name}! Добавь запись о еде.")
+                    
+    except Exception as e:
+        logging.error(f"❌ Ошибка в check_all_reminders: {e}", exc_info=True)
     """Проверяет все напоминания (и обычные из БД, и кастомные из JSON)"""
     try:
         now_utc = datetime.utcnow()
