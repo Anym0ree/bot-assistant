@@ -11,7 +11,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from config import BOT_TOKEN, OPENAI_API_KEY
-from database_pg import db
+from database import db
 from keyboards import get_main_menu
 from utils import set_bot_instance, safe_finish, delete_dialog_message
 from reminder_utils import load_reminder_settings, get_default_reminders
