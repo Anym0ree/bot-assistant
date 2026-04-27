@@ -148,22 +148,18 @@ async def remind_update_profile():
     """Раз в месяц напоминает пользователям обновить профиль"""
     try:
         now = datetime.utcnow()
-        # Получаем всех пользователей, у которых есть настройки
-        async with db.conn.execute("SELECT DISTINCT user_id FROM users") as cursor:
-            users = await cursor.fetchall()
-        for (user_id,) in users:
-            # Проверим, когда в последний раз обновлялся профиль (по полю created_at users)
-            cur = await db.conn.execute("SELECT created_at FROM users WHERE user_id = ?", (user_id,))
-            row = await cur.fetchone()
-            if row and row[0]:
-                last_update = row[0]
-                # Если прошло больше 30 дней
+        async with db.pool.acquire() as conn:
+            users = await conn.fetch("SELECT DISTINCT user_id FROM users")
+        for user in users:
+            user_id = user['user_id']
+            async with db.pool.acquire() as conn:
+                row = await conn.fetchrow("SELECT created_at FROM users WHERE user_id = $1", user_id)
+            if row and row['created_at']:
+                last_update = row['created_at']
                 if (now - last_update).days >= 30:
-                    await bot.send_message(user_id, 
-                        "📅 Напоминание: уже прошёл месяц. Не хочешь обновить свои данные (возраст, рост, вес) в настройках? Это поможет AI давать более точные советы.",
-                        reply_markup=InlineKeyboardMarkup().add(
-                            InlineKeyboardButton("⚙️ Перейти в настройки", callback_data="settings_back")
-                        )
+                    await bot.send_message(
+                        user_id,
+                        "📅 Напоминание: уже прошёл месяц. Обнови свои данные (возраст, рост, вес) в настройках (кнопка ⚙️ Настройки → ✏️ Редактировать профиль)."
                     )
     except Exception as e:
         logging.error(f"Ошибка в remind_update_profile: {e}")
