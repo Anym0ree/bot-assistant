@@ -8,6 +8,8 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 from database import db
 from keyboards import get_main_menu
 
+logger = logging.getLogger(__name__)
+
 class DNDStates(StatesGroup):
     waiting_start = State()
     waiting_end = State()
@@ -21,22 +23,30 @@ async def settings_menu(message: types.Message, state: FSMContext = None):
     if state:
         await state.finish()
     user_id = message.from_user.id
-    cur = await db.conn.execute(
-        "SELECT ai_enabled, reminders_enabled, daily_surveys_enabled, weekly_report_enabled, do_not_disturb_start, do_not_disturb_end FROM user_settings WHERE user_id = ?",
-        (user_id,)
-    )
-    row = await cur.fetchone()
-    if not row:
-        await db.conn.execute("INSERT INTO user_settings (user_id) VALUES (?)", (user_id,))
-        await db.conn.commit()
-        ai_enabled = reminders_enabled = daily_surveys_enabled = weekly_report_enabled = 1
-        dnd_start = dnd_end = None
-    else:
-        ai_enabled, reminders_enabled, daily_surveys_enabled, weekly_report_enabled, dnd_start, dnd_end = row
+
+    async with db.pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT ai_enabled, reminders_enabled, daily_surveys_enabled, weekly_report_enabled, do_not_disturb_start, do_not_disturb_end FROM user_settings WHERE user_id = $1",
+            user_id
+        )
+        if not row:
+            await conn.execute("INSERT INTO user_settings (user_id) VALUES ($1)", user_id)
+            ai_enabled = reminders_enabled = daily_surveys_enabled = weekly_report_enabled = 1
+            dnd_start = dnd_end = None
+        else:
+            ai_enabled = row['ai_enabled']
+            reminders_enabled = row['reminders_enabled']
+            daily_surveys_enabled = row['daily_surveys_enabled']
+            weekly_report_enabled = row['weekly_report_enabled']
+            dnd_start = row['do_not_disturb_start']
+            dnd_end = row['do_not_disturb_end']
 
     # Получаем профиль
     profile = await db.get_user_profile(user_id)
-    profile_text = f"👤 Профиль: {profile['age']} лет, {profile['height']} см, {profile['weight']} кг" if profile['age'] else "👤 Профиль не заполнен"
+    if profile['age']:
+        profile_text = f"👤 Профиль: {profile['age']} лет, {profile['height']} см, {profile['weight']} кг"
+    else:
+        profile_text = "👤 Профиль не заполнен"
 
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
@@ -71,35 +81,34 @@ async def settings_callback(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    async def toggle(setting):
-        cur = await db.conn.execute(f"SELECT {setting} FROM user_settings WHERE user_id = ?", (user_id,))
-        row = await cur.fetchone()
-        current = row[0] if row else 1
-        new_val = 0 if current else 1
-        await db.conn.execute(f"""
-            INSERT INTO user_settings (user_id, {setting}) VALUES (?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET {setting} = ?
-        """, (user_id, new_val, new_val))
-        await db.conn.commit()
+    async def toggle_setting(setting_name):
+        async with db.pool.acquire() as conn:
+            row = await conn.fetchrow(f"SELECT {setting_name} FROM user_settings WHERE user_id = $1", user_id)
+            current = row[setting_name] if row else 1
+            new_val = 0 if current else 1
+            await conn.execute(f"""
+                INSERT INTO user_settings (user_id, {setting_name}) VALUES ($1, $2)
+                ON CONFLICT (user_id) DO UPDATE SET {setting_name} = $2
+            """, user_id, new_val)
         return new_val
 
     if data == "set_ai":
-        new_val = await toggle("ai_enabled")
+        new_val = await toggle_setting("ai_enabled")
         await callback.answer(f"AI-совет {'включён' if new_val else 'выключен'}")
         await settings_menu(callback.message, state)
         await callback.message.delete()
     elif data == "set_reminders":
-        new_val = await toggle("reminders_enabled")
+        new_val = await toggle_setting("reminders_enabled")
         await callback.answer(f"Напоминания {'включены' if new_val else 'выключены'}")
         await settings_menu(callback.message, state)
         await callback.message.delete()
     elif data == "set_surveys":
-        new_val = await toggle("daily_surveys_enabled")
+        new_val = await toggle_setting("daily_surveys_enabled")
         await callback.answer(f"Опросники {'включены' if new_val else 'выключены'}")
         await settings_menu(callback.message, state)
         await callback.message.delete()
     elif data == "set_reports":
-        new_val = await toggle("weekly_report_enabled")
+        new_val = await toggle_setting("weekly_report_enabled")
         await callback.answer(f"Отчёты {'включены' if new_val else 'выключены'}")
         await settings_menu(callback.message, state)
         await callback.message.delete()
@@ -186,19 +195,23 @@ async def dnd_end(message: types.Message, state: FSMContext):
     start = data["dnd_start"]
     end = message.text
     user_id = message.from_user.id
-    await db.conn.execute("""
-        INSERT INTO user_settings (user_id, do_not_disturb_start, do_not_disturb_end)
-        VALUES (?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET do_not_disturb_start = ?, do_not_disturb_end = ?
-    """, (user_id, start, end, start, end))
-    await db.conn.commit()
+    async with db.pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO user_settings (user_id, do_not_disturb_start, do_not_disturb_end)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (user_id) DO UPDATE SET do_not_disturb_start = $2, do_not_disturb_end = $3
+        """, user_id, start, end)
     await state.finish()
     await message.answer(f"✅ Тихий час установлен с {start} до {end}.")
     await settings_menu(message)
 
 def register(dp: Dispatcher):
     dp.register_message_handler(settings_menu, text="⚙️ Настройки", state="*")
-    dp.register_callback_query_handler(settings_callback, lambda c: c.data.startswith(('set_', 'edit_profile', 'settings_back')), state="*")
+    dp.register_callback_query_handler(
+        settings_callback,
+        lambda c: c.data.startswith(('set_', 'edit_profile', 'settings_back')),
+        state="*"
+    )
     dp.register_message_handler(profile_age, state=ProfileEditStates.age, content_types=types.ContentTypes.TEXT)
     dp.register_message_handler(profile_height, state=ProfileEditStates.height, content_types=types.ContentTypes.TEXT)
     dp.register_message_handler(profile_weight, state=ProfileEditStates.weight, content_types=types.ContentTypes.TEXT)
