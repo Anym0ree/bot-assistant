@@ -12,6 +12,11 @@ class DNDStates(StatesGroup):
     waiting_start = State()
     waiting_end = State()
 
+class ProfileEditStates(StatesGroup):
+    age = State()
+    height = State()
+    weight = State()
+
 async def settings_menu(message: types.Message, state: FSMContext = None):
     if state:
         await state.finish()
@@ -29,18 +34,24 @@ async def settings_menu(message: types.Message, state: FSMContext = None):
     else:
         ai_enabled, reminders_enabled, daily_surveys_enabled, weekly_report_enabled, dnd_start, dnd_end = row
 
+    # Получаем профиль
+    profile = await db.get_user_profile(user_id)
+    profile_text = f"👤 Профиль: {profile['age']} лет, {profile['height']} см, {profile['weight']} кг" if profile['age'] else "👤 Профиль не заполнен"
+
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
         InlineKeyboardButton(f"{'✅' if ai_enabled else '❌'} AI-совет", callback_data="set_ai"),
         InlineKeyboardButton(f"{'✅' if reminders_enabled else '❌'} Напоминания", callback_data="set_reminders"),
         InlineKeyboardButton(f"{'✅' if daily_surveys_enabled else '❌'} Опросники", callback_data="set_surveys"),
         InlineKeyboardButton(f"{'✅' if weekly_report_enabled else '❌'} Отчёты", callback_data="set_reports"),
+        InlineKeyboardButton("✏️ Редактировать профиль", callback_data="edit_profile"),
         InlineKeyboardButton("🕒 Тихий час", callback_data="set_dnd"),
         InlineKeyboardButton("⬅️ Назад", callback_data="settings_back")
     )
     dnd_text = f" (тихий час {dnd_start}–{dnd_end})" if dnd_start and dnd_end else ""
     await message.answer(
         f"⚙️ *Настройки бота*\n\n"
+        f"{profile_text}\n\n"
         f"AI-совет: {'включён' if ai_enabled else 'выключен'}\n"
         f"Напоминания: {'включены' if reminders_enabled else 'выключены'}\n"
         f"Опросники: {'включены' if daily_surveys_enabled else 'выключены'}\n"
@@ -92,10 +103,64 @@ async def settings_callback(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer(f"Отчёты {'включены' if new_val else 'выключены'}")
         await settings_menu(callback.message, state)
         await callback.message.delete()
+    elif data == "edit_profile":
+        await callback.message.answer("📝 Введи новый возраст (число от 1 до 120).\nОтправь /cancel для отмены.")
+        await ProfileEditStates.age.set()
+        await callback.answer()
     elif data == "set_dnd":
         await callback.message.answer("🕒 Введи время начала тихого часа (ЧЧ:ММ, например 23:00).\nОтправь /cancel для отмены.")
         await DNDStates.waiting_start.set()
         await callback.answer()
+
+async def profile_age(message: types.Message, state: FSMContext):
+    if message.text == "/cancel":
+        await state.finish()
+        await message.answer("Отменено.", reply_markup=get_main_menu())
+        return
+    try:
+        age = int(message.text)
+        if 1 <= age <= 120:
+            await state.update_data(age=age)
+            await message.answer("📏 Введи рост (в см, от 50 до 250):")
+            await ProfileEditStates.height.set()
+        else:
+            await message.answer("❌ Возраст должен быть от 1 до 120. Попробуй ещё раз.")
+    except ValueError:
+        await message.answer("❌ Введи число.")
+
+async def profile_height(message: types.Message, state: FSMContext):
+    if message.text == "/cancel":
+        await state.finish()
+        await message.answer("Отменено.", reply_markup=get_main_menu())
+        return
+    try:
+        height = int(message.text)
+        if 50 <= height <= 250:
+            await state.update_data(height=height)
+            await message.answer("⚖️ Введи вес (в кг, от 10 до 300):")
+            await ProfileEditStates.weight.set()
+        else:
+            await message.answer("❌ Рост должен быть от 50 до 250 см.")
+    except ValueError:
+        await message.answer("❌ Введи число.")
+
+async def profile_weight(message: types.Message, state: FSMContext):
+    if message.text == "/cancel":
+        await state.finish()
+        await message.answer("Отменено.", reply_markup=get_main_menu())
+        return
+    try:
+        weight = int(message.text)
+        if 10 <= weight <= 300:
+            data = await state.get_data()
+            await db.update_user_profile(message.from_user.id, age=data['age'], height=data['height'], weight=weight)
+            await state.finish()
+            await message.answer("✅ Профиль обновлён!", reply_markup=get_main_menu())
+            await settings_menu(message)
+        else:
+            await message.answer("❌ Вес должен быть от 10 до 300 кг.")
+    except ValueError:
+        await message.answer("❌ Введи число.")
 
 async def dnd_start(message: types.Message, state: FSMContext):
     if message.text == "/cancel":
@@ -133,6 +198,9 @@ async def dnd_end(message: types.Message, state: FSMContext):
 
 def register(dp: Dispatcher):
     dp.register_message_handler(settings_menu, text="⚙️ Настройки", state="*")
-    dp.register_callback_query_handler(settings_callback, lambda c: c.data.startswith(('set_', 'settings_back')), state="*")
+    dp.register_callback_query_handler(settings_callback, lambda c: c.data.startswith(('set_', 'edit_profile', 'settings_back')), state="*")
+    dp.register_message_handler(profile_age, state=ProfileEditStates.age, content_types=types.ContentTypes.TEXT)
+    dp.register_message_handler(profile_height, state=ProfileEditStates.height, content_types=types.ContentTypes.TEXT)
+    dp.register_message_handler(profile_weight, state=ProfileEditStates.weight, content_types=types.ContentTypes.TEXT)
     dp.register_message_handler(dnd_start, state=DNDStates.waiting_start, content_types=types.ContentTypes.TEXT)
     dp.register_message_handler(dnd_end, state=DNDStates.waiting_end, content_types=types.ContentTypes.TEXT)
