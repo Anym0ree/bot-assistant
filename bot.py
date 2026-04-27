@@ -9,7 +9,7 @@ from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.utils import executor
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-
+from apscheduler.triggers.cron import CronTrigger
 from config import BOT_TOKEN, OPENAI_API_KEY
 from database import db
 from keyboards import get_main_menu
@@ -149,6 +149,30 @@ async def check_all_reminders():
                     await bot.send_message(user_id, f"🍽 Пора {meal_name}! Добавь запись о еде.")
     except Exception as e:
         logging.error(f"Ошибка в check_all_reminders: {e}", exc_info=True)
+#===============================
+async def remind_update_profile():
+    """Раз в месяц напоминает пользователям обновить профиль"""
+    try:
+        now = datetime.utcnow()
+        # Получаем всех пользователей, у которых есть настройки
+        async with db.conn.execute("SELECT DISTINCT user_id FROM users") as cursor:
+            users = await cursor.fetchall()
+        for (user_id,) in users:
+            # Проверим, когда в последний раз обновлялся профиль (по полю created_at users)
+            cur = await db.conn.execute("SELECT created_at FROM users WHERE user_id = ?", (user_id,))
+            row = await cur.fetchone()
+            if row and row[0]:
+                last_update = row[0]
+                # Если прошло больше 30 дней
+                if (now - last_update).days >= 30:
+                    await bot.send_message(user_id, 
+                        "📅 Напоминание: уже прошёл месяц. Не хочешь обновить свои данные (возраст, рост, вес) в настройках? Это поможет AI давать более точные советы.",
+                        reply_markup=InlineKeyboardMarkup().add(
+                            InlineKeyboardButton("⚙️ Перейти в настройки", callback_data="settings_back")
+                        )
+                    )
+    except Exception as e:
+        logging.error(f"Ошибка в remind_update_profile: {e}")
 # ========== ЗАПУСК ==========
 async def on_startup_polling(dp):
     await bot.delete_webhook()
@@ -156,6 +180,7 @@ async def on_startup_polling(dp):
     global scheduler
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_job(check_all_reminders, IntervalTrigger(minutes=1))
+    scheduler.add_job(remind_update_profile, CronTrigger(day=1, hour=12, minute=0, timezone="UTC"))  # 1-го числа каждого месяца в 12:00 UTC
     scheduler.start()
     logging.info("✅ Бот запущен в polling режиме!")
 
