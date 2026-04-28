@@ -13,7 +13,7 @@ async def get_stats_data(user_id, days):
     if tz == 0:
         tz = 3
     now_local = datetime.utcnow() + timedelta(hours=tz)
-    start_date = (now_local - timedelta(days=days)).strftime("%Y-%m-%d")  # строка!
+    start_date = (now_local - timedelta(days=days)).strftime("%Y-%m-%d")  # строка
 
     async with db.pool.acquire() as conn:
         sleep_rows = await conn.fetch(
