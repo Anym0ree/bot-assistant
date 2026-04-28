@@ -68,11 +68,10 @@ async def back_to_main(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("Главное меню", reply_markup=get_main_menu())
 
-# ---------- НАСТРОЙКА НАПОМИНАНИЙ ----------
 async def reminder_choose_type(message: types.Message, state: FSMContext):
     text = message.text
     type_map = {
-        "🛌 Сон": ("sleep", "Введи время для сна (ЧЧ:ММ, например 23:00):"),
+        "🛌 Сон": ("sleep", "Введи время для НАПОМИНАНИЯ о сне (ЧЧ:ММ, например 22:00):"),
         "⚡️ Чек-ины": ("checkins", "Введи время для чек-инов через запятую (12:00, 16:00, 20:00):"),
         "📝 Итог дня": ("summary", "Введи время для итога дня (ЧЧ:ММ, например 22:30):"),
         "💧 Вода": ("water", "Введи время для воды через запятую (10:00, 14:00, 18:00):"),
@@ -85,6 +84,8 @@ async def reminder_choose_type(message: types.Message, state: FSMContext):
         await SettingsStates.waiting_reminder_time.set()
     elif text == "⬅️ Назад":
         await settings_menu(message, state)
+    else:
+        await message.answer("Выбери из кнопок.")
 
 async def reminder_action(message: types.Message, state: FSMContext):
     data = await state.get_data()
@@ -96,19 +97,15 @@ async def reminder_action(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     if message.text == "✅ Включить":
         await message.answer("Введи время (в нужном формате):")
-        # остаёмся в том же состоянии
     elif message.text == "❌ Выключить":
         await db.set_reminder_setting(user_id, rem_type, False, [])
         await message.answer(f"Напоминание выключено.")
-        await state.finish()
         await reminder_settings_menu(message, state)
     elif message.text == "🕐 Изменить время":
         await message.answer("Введи новое время (в нужном формате):")
     elif message.text == "⬅️ Назад":
-        await state.finish()
         await reminder_settings_menu(message, state)
     else:
-        # если пользователь отправил не кнопку, а время – обработаем как ввод времени
         await set_reminder_time(message, state)
 
 async def set_reminder_time(message: types.Message, state: FSMContext):
@@ -125,7 +122,6 @@ async def set_reminder_time(message: types.Message, state: FSMContext):
             await message.answer(f"✅ Напоминание {rem_type} установлено на {time_str}")
         else:
             await message.answer("❌ Неверный формат. Нужно ЧЧ:ММ")
-            return
     else:
         parts = re.split(r'[ ,;]+', time_str)
         times = [t for t in parts if re.match(r"^(2[0-3]|[01]?[0-9]):[0-5][0-9]$", t)]
@@ -134,11 +130,8 @@ async def set_reminder_time(message: types.Message, state: FSMContext):
             await message.answer(f"✅ Напоминания {rem_type} установлены на {', '.join(times)}")
         else:
             await message.answer("❌ Неверный формат. Введи время через запятую (например, 12:00, 16:00)")
-            return
-    await state.finish()
     await reminder_settings_menu(message, state)
 
-# ---------- ПРОФИЛЬ ----------
 async def profile_age(message: types.Message, state: FSMContext):
     try:
         age = int(message.text)
@@ -177,7 +170,6 @@ async def profile_weight(message: types.Message, state: FSMContext):
     except:
         await message.answer("❌ Введи число.")
 
-# ---------- ТИХИЙ ЧАС ----------
 async def dnd_start(message: types.Message, state: FSMContext):
     if not re.match(r"^(2[0-3]|[01]?[0-9]):[0-5][0-9]$", message.text):
         await message.answer("❌ Неверный формат. Введи ЧЧ:ММ")
@@ -203,7 +195,6 @@ async def dnd_end(message: types.Message, state: FSMContext):
     await message.answer(f"✅ Тихий час установлен с {start} до {end}")
     await settings_menu(message, state)
 
-# ---------- СМЕНА ЧАСОВОГО ПОЯСА ----------
 async def set_timezone_offset(message: types.Message, state: FSMContext):
     try:
         offset = int(message.text)
