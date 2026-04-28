@@ -13,28 +13,29 @@ async def get_stats_data(user_id, days):
     if tz == 0:
         tz = 3
     now_local = datetime.utcnow() + timedelta(hours=tz)
-    start_date = (now_local - timedelta(days=days)).strftime("%Y-%m-%d")  # строка
+    start_date_obj = (now_local - timedelta(days=days)).date()
+    start_date_str = start_date_obj.strftime("%Y-%m-%d")
 
     async with db.pool.acquire() as conn:
         sleep_rows = await conn.fetch(
             "SELECT date, bed_time, wake_time, quality FROM sleep WHERE user_id = $1 AND date >= $2",
-            user_id, start_date
+            user_id, start_date_obj
         )
         checkin_rows = await conn.fetch(
             "SELECT date, energy, stress FROM checkins WHERE user_id = $1 AND date >= $2",
-            user_id, start_date
+            user_id, start_date_obj
         )
         summary_rows = await conn.fetch(
             "SELECT date, score FROM day_summary WHERE user_id = $1 AND date >= $2",
-            user_id, start_date
+            user_id, start_date_obj
         )
         water_rows = await conn.fetch(
             "SELECT amount FROM drinks WHERE user_id = $1 AND date >= $2 AND (drink_type = '💧 Вода' OR amount LIKE '%вода%')",
-            user_id, start_date
+            user_id, start_date_obj
         )
         ach_rows = await conn.fetch(
             "SELECT COUNT(*) FROM user_achievements WHERE user_id = $1 AND awarded_at >= $2",
-            user_id, start_date
+            user_id, start_date_obj
         )
         stats_row = await conn.fetchrow(
             "SELECT sleep_streak, checkin_streak FROM user_stats WHERE user_id = $1",
@@ -73,7 +74,7 @@ async def get_stats_data(user_id, days):
 
     return {
         "days": days,
-        "start_date": start_date,
+        "start_date": start_date_str,
         "sleep_count": len(sleep_hours),
         "checkin_count": len(checkin_rows),
         "summary_count": len(summary_rows),
