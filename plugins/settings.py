@@ -15,21 +15,16 @@ class SettingsStates(StatesGroup):
     waiting_for_profile_age = State()
     waiting_for_profile_height = State()
     waiting_for_profile_weight = State()
-    waiting_for_sleep_time = State()
-    waiting_for_checkins_times = State()
-    waiting_for_summary_time = State()
-    waiting_for_water_times = State()
-    waiting_for_meals_times = State()
-    waiting_for_reminder_type = State()
+    waiting_reminder_time = State()  # общее состояние для ввода времени
+    waiting_for_timezone_offset = State()
 
-# ========== ГЛАВНОЕ МЕНЮ НАСТРОЕК ==========
 async def settings_menu(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("⚙️ *Настройки бота*", reply_markup=get_settings_keyboard(), parse_mode="Markdown")
 
 async def change_timezone(message: types.Message, state: FSMContext):
     await message.answer("Введи смещение часового пояса от UTC (например, +3 для Москвы):")
-    await state.set_state("waiting_for_timezone_offset")
+    await SettingsStates.waiting_for_timezone_offset.set()
 
 async def reminder_settings_menu(message: types.Message, state: FSMContext):
     await state.finish()
@@ -41,27 +36,27 @@ async def edit_profile(message: types.Message, state: FSMContext):
 
 async def toggle_ai(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
-    cur = await db.conn.execute("SELECT ai_enabled FROM user_settings WHERE user_id = $1", user_id)
-    row = await cur.fetchone()
-    current = row[0] if row else 1
-    new_val = 0 if current else 1
-    await db.conn.execute("""
-        INSERT INTO user_settings (user_id, ai_enabled) VALUES ($1, $2)
-        ON CONFLICT (user_id) DO UPDATE SET ai_enabled = $2
-    """, user_id, new_val)
+    async with db.pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT ai_enabled FROM user_settings WHERE user_id = $1", user_id)
+        current = row['ai_enabled'] if row else 1
+        new_val = 0 if current else 1
+        await conn.execute("""
+            INSERT INTO user_settings (user_id, ai_enabled) VALUES ($1, $2)
+            ON CONFLICT (user_id) DO UPDATE SET ai_enabled = $2
+        """, user_id, new_val)
     await message.answer(f"🤖 AI-совет {'включён' if new_val else 'выключен'}")
     await settings_menu(message, state)
 
 async def toggle_weekly_reports(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
-    cur = await db.conn.execute("SELECT weekly_report_enabled FROM user_settings WHERE user_id = $1", user_id)
-    row = await cur.fetchone()
-    current = row[0] if row else 1
-    new_val = 0 if current else 1
-    await db.conn.execute("""
-        INSERT INTO user_settings (user_id, weekly_report_enabled) VALUES ($1, $2)
-        ON CONFLICT (user_id) DO UPDATE SET weekly_report_enabled = $2
-    """, user_id, new_val)
+    async with db.pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT weekly_report_enabled FROM user_settings WHERE user_id = $1", user_id)
+        current = row['weekly_report_enabled'] if row else 1
+        new_val = 0 if current else 1
+        await conn.execute("""
+            INSERT INTO user_settings (user_id, weekly_report_enabled) VALUES ($1, $2)
+            ON CONFLICT (user_id) DO UPDATE SET weekly_report_enabled = $2
+        """, user_id, new_val)
     await message.answer(f"📊 Отчёты {'включены' if new_val else 'выключены'}")
     await settings_menu(message, state)
 
@@ -77,17 +72,17 @@ async def back_to_main(message: types.Message, state: FSMContext):
 async def reminder_choose_type(message: types.Message, state: FSMContext):
     text = message.text
     type_map = {
-        "🛌 Сон": ("sleep", "Введи время (ЧЧ:ММ):"),
-        "⚡️ Чек-ины": ("checkins", "Введи время через запятую (12:00, 16:00, 20:00):"),
-        "📝 Итог дня": ("summary", "Введи время (ЧЧ:ММ):"),
-        "💧 Вода": ("water", "Введи время через запятую (10:00, 14:00, 18:00):"),
-        "🍽 Еда": ("meals", "Введи время через запятую (09:00, 13:00, 19:00):")
+        "🛌 Сон": ("sleep", "Введи время для сна (ЧЧ:ММ, например 23:00):"),
+        "⚡️ Чек-ины": ("checkins", "Введи время для чек-инов через запятую (12:00, 16:00, 20:00):"),
+        "📝 Итог дня": ("summary", "Введи время для итога дня (ЧЧ:ММ, например 22:30):"),
+        "💧 Вода": ("water", "Введи время для воды через запятую (10:00, 14:00, 18:00):"),
+        "🍽 Еда": ("meals", "Введи время для приёмов пищи через запятую (09:00, 13:00, 19:00):")
     }
     if text in type_map:
         rem_type, prompt = type_map[text]
         await state.update_data(reminder_type=rem_type)
         await message.answer(prompt, reply_markup=get_reminder_action_keyboard())
-        await SettingsStates.waiting_for_reminder_type.set()
+        await SettingsStates.waiting_reminder_time.set()
     elif text == "⬅️ Назад":
         await settings_menu(message, state)
 
@@ -101,8 +96,7 @@ async def reminder_action(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     if message.text == "✅ Включить":
         await message.answer("Введи время (в нужном формате):")
-        # Оставим как простой ввод – пользователь введёт время, следующий хендлер подхватит
-        return
+        # остаёмся в том же состоянии
     elif message.text == "❌ Выключить":
         await db.set_reminder_setting(user_id, rem_type, False, [])
         await message.answer(f"Напоминание выключено.")
@@ -111,8 +105,10 @@ async def reminder_action(message: types.Message, state: FSMContext):
         await message.answer("Введи новое время (в нужном формате):")
     elif message.text == "⬅️ Назад":
         await reminder_settings_menu(message, state)
+    else:
+        # если пользователь отправил не кнопку, а время – обработаем в отдельном хендлере
+        await set_reminder_time(message, state)
 
-# Упрощённый приём времени – общий хендлер
 async def set_reminder_time(message: types.Message, state: FSMContext):
     data = await state.get_data()
     rem_type = data.get("reminder_type")
@@ -126,7 +122,7 @@ async def set_reminder_time(message: types.Message, state: FSMContext):
             await db.set_reminder_setting(user_id, rem_type, True, [time_str])
             await message.answer(f"✅ Напоминание {rem_type} установлено на {time_str}")
         else:
-            await message.answer("Неверный формат. Нужно ЧЧ:ММ")
+            await message.answer("❌ Неверный формат. Нужно ЧЧ:ММ")
     else:
         parts = re.split(r'[ ,;]+', time_str)
         times = [t for t in parts if re.match(r"^(2[0-3]|[01]?[0-9]):[0-5][0-9]$", t)]
@@ -134,7 +130,7 @@ async def set_reminder_time(message: types.Message, state: FSMContext):
             await db.set_reminder_setting(user_id, rem_type, True, times)
             await message.answer(f"✅ Напоминания {rem_type} установлены на {', '.join(times)}")
         else:
-            await message.answer("Неверный формат. Введи время через запятую (например, 12:00, 16:00)")
+            await message.answer("❌ Неверный формат. Введи время через запятую (например, 12:00, 16:00)")
     await reminder_settings_menu(message, state)
 
 # ========== ПРОФИЛЬ ==========
@@ -146,9 +142,9 @@ async def profile_age(message: types.Message, state: FSMContext):
             await message.answer("Введи рост (в см):")
             await SettingsStates.waiting_for_profile_height.set()
         else:
-            await message.answer("От 1 до 120.")
+            await message.answer("❌ От 1 до 120.")
     except:
-        await message.answer("Введи число.")
+        await message.answer("❌ Введи число.")
 
 async def profile_height(message: types.Message, state: FSMContext):
     try:
@@ -158,9 +154,9 @@ async def profile_height(message: types.Message, state: FSMContext):
             await message.answer("Введи вес (в кг):")
             await SettingsStates.waiting_for_profile_weight.set()
         else:
-            await message.answer("Рост 50-250 см.")
+            await message.answer("❌ Рост 50-250 см.")
     except:
-        await message.answer("Введи число.")
+        await message.answer("❌ Введи число.")
 
 async def profile_weight(message: types.Message, state: FSMContext):
     try:
@@ -172,14 +168,14 @@ async def profile_weight(message: types.Message, state: FSMContext):
             await message.answer("✅ Профиль обновлён!")
             await settings_menu(message, state)
         else:
-            await message.answer("Вес 10-300 кг.")
+            await message.answer("❌ Вес 10-300 кг.")
     except:
-        await message.answer("Введи число.")
+        await message.answer("❌ Введи число.")
 
 # ========== ТИХИЙ ЧАС ==========
 async def dnd_start(message: types.Message, state: FSMContext):
     if not re.match(r"^(2[0-3]|[01]?[0-9]):[0-5][0-9]$", message.text):
-        await message.answer("Неверный формат. Введи ЧЧ:ММ")
+        await message.answer("❌ Неверный формат. Введи ЧЧ:ММ")
         return
     await state.update_data(dnd_start=message.text)
     await message.answer("Введи конец тихого часа (ЧЧ:ММ):")
@@ -187,18 +183,19 @@ async def dnd_start(message: types.Message, state: FSMContext):
 
 async def dnd_end(message: types.Message, state: FSMContext):
     if not re.match(r"^(2[0-3]|[01]?[0-9]):[0-5][0-9]$", message.text):
-        await message.answer("Неверный формат.")
+        await message.answer("❌ Неверный формат.")
         return
     data = await state.get_data()
     start = data.get("dnd_start")
     end = message.text
     user_id = message.from_user.id
-    await db.conn.execute("""
-        INSERT INTO user_settings (user_id, do_not_disturb_start, do_not_disturb_end)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (user_id) DO UPDATE SET do_not_disturb_start = $2, do_not_disturb_end = $3
-    """, user_id, start, end)
-    await message.answer(f"✅ Тихий час {start}–{end}")
+    async with db.pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO user_settings (user_id, do_not_disturb_start, do_not_disturb_end)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (user_id) DO UPDATE SET do_not_disturb_start = $2, do_not_disturb_end = $3
+        """, user_id, start, end)
+    await message.answer(f"✅ Тихий час установлен с {start} до {end}")
     await settings_menu(message, state)
 
 # ========== СМЕНА ЧАСОВОГО ПОЯСА ==========
@@ -211,9 +208,9 @@ async def set_timezone_offset(message: types.Message, state: FSMContext):
             await message.answer("✅ Часовой пояс обновлён.")
             await settings_menu(message, state)
         else:
-            await message.answer("Смещение от -12 до +14")
+            await message.answer("❌ Смещение от -12 до +14")
     except:
-        await message.answer("Введи целое число (например, +3)")
+        await message.answer("❌ Введи целое число (например, +3)")
 
 # ========== РЕГИСТРАЦИЯ ==========
 def register(dp: Dispatcher):
@@ -226,12 +223,11 @@ def register(dp: Dispatcher):
     dp.register_message_handler(quiet_hours, text="🕒 Тихий час", state="*")
     dp.register_message_handler(back_to_main, text="⬅️ Назад", state="*")
     dp.register_message_handler(reminder_choose_type, text=["🛌 Сон", "⚡️ Чек-ины", "📝 Итог дня", "💧 Вода", "🍽 Еда", "⬅️ Назад"], state="*")
-    dp.register_message_handler(reminder_action, state=SettingsStates.waiting_for_reminder_type)
-    dp.register_message_handler(set_reminder_time, state=SettingsStates.waiting_for_reminder_type)
+    dp.register_message_handler(reminder_action, state=SettingsStates.waiting_reminder_time)
+    dp.register_message_handler(set_reminder_time, state=SettingsStates.waiting_reminder_time)
     dp.register_message_handler(profile_age, state=SettingsStates.waiting_for_profile_age)
     dp.register_message_handler(profile_height, state=SettingsStates.waiting_for_profile_height)
     dp.register_message_handler(profile_weight, state=SettingsStates.waiting_for_profile_weight)
     dp.register_message_handler(dnd_start, state=SettingsStates.waiting_for_dnd_start)
     dp.register_message_handler(dnd_end, state=SettingsStates.waiting_for_dnd_end)
-    dp.register_message_handler(set_timezone_offset, state="waiting_for_timezone_offset")
-    
+    dp.register_message_handler(set_timezone_offset, state=SettingsStates.waiting_for_timezone_offset)
