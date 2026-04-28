@@ -15,7 +15,7 @@ class SettingsStates(StatesGroup):
     waiting_for_profile_age = State()
     waiting_for_profile_height = State()
     waiting_for_profile_weight = State()
-    waiting_reminder_time = State()  # общее состояние для ввода времени
+    waiting_reminder_time = State()
     waiting_for_timezone_offset = State()
 
 async def settings_menu(message: types.Message, state: FSMContext):
@@ -68,7 +68,7 @@ async def back_to_main(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("Главное меню", reply_markup=get_main_menu())
 
-# ========== НАСТРОЙКА КОНКРЕТНЫХ НАПОМИНАНИЙ ==========
+# ---------- НАСТРОЙКА НАПОМИНАНИЙ ----------
 async def reminder_choose_type(message: types.Message, state: FSMContext):
     text = message.text
     type_map = {
@@ -106,7 +106,7 @@ async def reminder_action(message: types.Message, state: FSMContext):
     elif message.text == "⬅️ Назад":
         await reminder_settings_menu(message, state)
     else:
-        # если пользователь отправил не кнопку, а время – обработаем в отдельном хендлере
+        # если пользователь отправил не кнопку, а время – обработаем как ввод времени
         await set_reminder_time(message, state)
 
 async def set_reminder_time(message: types.Message, state: FSMContext):
@@ -133,7 +133,7 @@ async def set_reminder_time(message: types.Message, state: FSMContext):
             await message.answer("❌ Неверный формат. Введи время через запятую (например, 12:00, 16:00)")
     await reminder_settings_menu(message, state)
 
-# ========== ПРОФИЛЬ ==========
+# ---------- ПРОФИЛЬ ----------
 async def profile_age(message: types.Message, state: FSMContext):
     try:
         age = int(message.text)
@@ -172,7 +172,7 @@ async def profile_weight(message: types.Message, state: FSMContext):
     except:
         await message.answer("❌ Введи число.")
 
-# ========== ТИХИЙ ЧАС ==========
+# ---------- ТИХИЙ ЧАС ----------
 async def dnd_start(message: types.Message, state: FSMContext):
     if not re.match(r"^(2[0-3]|[01]?[0-9]):[0-5][0-9]$", message.text):
         await message.answer("❌ Неверный формат. Введи ЧЧ:ММ")
@@ -198,7 +198,7 @@ async def dnd_end(message: types.Message, state: FSMContext):
     await message.answer(f"✅ Тихий час установлен с {start} до {end}")
     await settings_menu(message, state)
 
-# ========== СМЕНА ЧАСОВОГО ПОЯСА ==========
+# ---------- СМЕНА ЧАСОВОГО ПОЯСА ----------
 async def set_timezone_offset(message: types.Message, state: FSMContext):
     try:
         offset = int(message.text)
@@ -212,7 +212,6 @@ async def set_timezone_offset(message: types.Message, state: FSMContext):
     except:
         await message.answer("❌ Введи целое число (например, +3)")
 
-# ========== РЕГИСТРАЦИЯ ==========
 def register(dp: Dispatcher):
     dp.register_message_handler(settings_menu, text="⚙️ Настройки", state="*")
     dp.register_message_handler(change_timezone, text="🌍 Сменить часовой пояс", state="*")
