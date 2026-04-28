@@ -272,7 +272,6 @@ def get_view_type_buttons():
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 # ========== INLINE КЛАВИАТУРЫ (для просмотра заметок/напоминаний) ==========
-# (оставлены для удобства, не конфликтуют)
 def get_notes_list_keyboard(notes, page=0, per_page=5):
     total_pages = ceil(len(notes) / per_page) if notes else 1
     start = page * per_page
