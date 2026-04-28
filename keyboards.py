@@ -15,6 +15,7 @@ def get_main_menu():
         [KeyboardButton(text="📤 Экспорт")],
         [KeyboardButton(text="🔄 Конвертер")],
         [KeyboardButton(text="🏆 Достижения")],
+        [KeyboardButton(text="🌤️ Погода")],
         [KeyboardButton(text="⚙️ Настройки")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
@@ -38,6 +39,8 @@ def get_settings_keyboard():
         [KeyboardButton(text="🤖 AI-совет (вкл/выкл)")],
         [KeyboardButton(text="📊 Еженедельные отчёты (вкл/выкл)")],
         [KeyboardButton(text="🕒 Тихий час")],
+        [KeyboardButton(text="🌍 Указать город")],
+        [KeyboardButton(text="🌤️ Уведомления о погоде")],
         [KeyboardButton(text="⬅️ Назад")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
@@ -100,7 +103,7 @@ def get_reminder_advance_buttons():
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
-# ========== КНОПКИ ДЛЯ ЕДЫ, СНА, ЧЕК-ИНОВ (старые) ==========
+# ========== КНОПКИ ДЛЯ ЕДЫ, СНА, ЧЕК-ИНОВ ==========
 def get_food_drink_menu():
     buttons = [
         [KeyboardButton(text="➕ Добавить еду/напитки")],
