@@ -36,7 +36,8 @@ class Database:
                     created_at TIMESTAMP,
                     age INTEGER DEFAULT 0,
                     height INTEGER DEFAULT 0,
-                    weight INTEGER DEFAULT 0
+                    weight INTEGER DEFAULT 0,
+                    city TEXT
                 )
             ''')
             # sleep
@@ -117,7 +118,7 @@ class Database:
                     timestamp TIMESTAMP
                 )
             ''')
-            # reminders (добавим snooze_until)
+            # reminders
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS reminders (
                     id SERIAL PRIMARY KEY,
@@ -134,8 +135,7 @@ class Database:
                     snooze_until TIMESTAMP
                 )
             ''')
-
-                        # reminders (добавим snooze_until)
+            # user_locations (отдельная таблица для геоданных)
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS user_locations (
                     user_id BIGINT PRIMARY KEY,
@@ -143,7 +143,7 @@ class Database:
                     lat REAL,
                     lon REAL,
                     updated_at TIMESTAMP DEFAULT NOW()
-                );
+                )
             ''')
             # ai_history
             await conn.execute('''
@@ -207,7 +207,7 @@ class Database:
                     last_sleep_date DATE
                 )
             ''')
-            # user_settings
+            # user_settings (добавим weather_notify)
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS user_settings (
                     user_id BIGINT PRIMARY KEY,
@@ -216,7 +216,8 @@ class Database:
                     daily_surveys_enabled INTEGER DEFAULT 1,
                     weekly_report_enabled INTEGER DEFAULT 1,
                     do_not_disturb_start TEXT,
-                    do_not_disturb_end TEXT
+                    do_not_disturb_end TEXT,
+                    weather_notify INTEGER DEFAULT 0
                 )
             ''')
             # Вставка достижений по умолчанию
@@ -233,7 +234,6 @@ class Database:
             logging.info("✅ Все таблицы созданы")
 
     async def _migrate_reminder_settings(self):
-        # Можно пропустить, если нет старого JSON
         pass
 
     # ========== МЕТОДЫ ДЛЯ НАПОМИНАНИЙ ==========
@@ -246,10 +246,10 @@ class Database:
         if row:
             return {"enabled": row['enabled'], "times": row['times']}
         defaults = {
-            "sleep": {"enabled": True, "times": ["09:00"]},
+            "sleep": {"enabled": True, "times": ["22:00"]},
             "checkins": {"enabled": True, "times": ["12:00", "16:00", "20:00"]},
-            "summary": {"enabled": True, "times": ["22:30"]},
-            "water": {"enabled": True, "times": ["10:00", "14:00", "18:00", "22:00"]},
+            "summary": {"enabled": True, "times": ["21:00"]},
+            "water": {"enabled": True, "times": ["10:00", "14:00", "18:00"]},
             "meals": {"enabled": True, "times": ["09:00", "13:00", "19:00"]}
         }
         return defaults.get(setting_type, {"enabled": False, "times": []})
