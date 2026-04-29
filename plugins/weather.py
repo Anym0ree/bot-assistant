@@ -16,26 +16,42 @@ class WeatherState(StatesGroup):
     waiting_for_city = State()
 
 async def get_weather_by_city(city):
-    url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
+    if not WEATHER_API_KEY:
+        logger.error("WEATHER_API_KEY не задан")
+        return None
+    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                return await resp.json()
-            else:
-                return None
+        try:
+            async with session.get(url, headers=headers, timeout=10) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                else:
+                    text = await resp.text()
+                    logger.error(f"Ошибка погоды {resp.status}: {text}")
+                    return None
+        except Exception as e:
+            logger.error(f"Исключение при запросе погоды: {e}")
+            return None
 
 async def get_weather_by_coords(lat, lon):
-    url = f"http://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
+    if not WEATHER_API_KEY:
+        return None
+    url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
+    headers = {"User-Agent": "Mozilla/5.0"}
     async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                return await resp.json()
-            else:
-                return None
+        try:
+            async with session.get(url, headers=headers, timeout=10) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                else:
+                    return None
+        except Exception:
+            return None
 
 def format_weather(data):
     if not data:
-        return "❌ Не удалось получить погоду."
+        return "❌ Не удалось получить погоду. Проверь API-ключ или название города.", None, None
     city = data.get('name', 'Неизвестно')
     temp = data['main']['temp']
     feels_like = data['main']['feels_like']
@@ -67,10 +83,16 @@ def format_weather(data):
     return text, desc, temp
 
 async def get_ai_recommendation(user_id, weather_desc, temp):
+    if not weather_desc:
+        return ""
     prompt = f"Погода сейчас: {weather_desc}, температура {temp:.1f}°C. Дай короткий совет (до 80 символов) по одежде и аксессуарам (зонт, очки, шапка и т.п.). Не пиши лишнего."
     if ai_advisor.ai_advisor:
-        advice = await ai_advisor.ai_advisor.get_advice(user_id, prompt, history=None)
-        return advice[:200]
+        try:
+            advice = await ai_advisor.ai_advisor.get_advice(user_id, prompt, history=None)
+            return advice[:200]
+        except Exception as e:
+            logger.error(f"Ошибка AI рекомендации: {e}")
+            return ""
     return ""
 
 async def show_weather_by_location(user_id, message, lat=None, lon=None, city=None):
@@ -86,7 +108,7 @@ async def show_weather_by_location(user_id, message, lat=None, lon=None, city=No
                 city = row['city']
                 lat = row['lat']
                 lon = row['lon']
-    if city:
+    if city and not lat:
         data = await get_weather_by_city(city)
     elif lat and lon:
         data = await get_weather_by_coords(lat, lon)
@@ -94,7 +116,7 @@ async def show_weather_by_location(user_id, message, lat=None, lon=None, city=No
         await message.answer("📍 Я не знаю твоё местоположение. Отправь геопозицию или напиши город.")
         return
     if not data:
-        await message.answer("❌ Не удалось получить погоду. Попробуй позже или укажи город заново.")
+        await message.answer("❌ Не удалось получить погоду. Проверь API-ключ или название города.")
         return
     weather_text, desc, temp = format_weather(data)
     advice = await get_ai_recommendation(user_id, desc, temp)
