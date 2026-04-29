@@ -9,5 +9,4 @@ async def stats_menu(message: types.Message, state: FSMContext):
     await message.answer(text, parse_mode="Markdown", reply_markup=get_main_menu())
 
 def register(dp: Dispatcher):
-    dp.register_message_handler(stats_menu, text="📊 Статистика", state="*")ы
-    
+    dp.register_message_handler(stats_menu, text="📊 Статистика", state="*")
