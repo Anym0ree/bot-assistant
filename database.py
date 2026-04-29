@@ -134,6 +134,17 @@ class Database:
                     snooze_until TIMESTAMP
                 )
             ''')
+
+                        # reminders (добавим snooze_until)
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS user_locations (
+                    user_id BIGINT PRIMARY KEY,
+                    city TEXT,
+                    lat REAL,
+                    lon REAL,
+                    updated_at TIMESTAMP DEFAULT NOW()
+                );
+            ''')
             # ai_history
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS ai_history (
