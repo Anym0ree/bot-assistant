@@ -231,10 +231,202 @@ class Database:
                 ('checkin_7_days', 'Неделя чек-инов', 'Делать чек-ин 7 дней подряд', '📊')
                 ON CONFLICT (code) DO NOTHING
             ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    task_type TEXT NOT NULL, -- 'once', 'recurring'
+                    recurrence_type TEXT, -- 'daily', 'alternate', 'weekdays', 'weekends', 'weekly', 'interval'
+                    recurrence_interval INTEGER,
+                    recurrence_days INTEGER[],
+                    start_date DATE,
+                    start_time TIME,
+                    remind_before_minutes INTEGER DEFAULT 45,
+                    next_due TIMESTAMP,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS task_logs (
+                    id SERIAL PRIMARY KEY,
+                    task_id INTEGER,
+                    user_id BIGINT,
+                    due_date DATE,
+                    completed BOOLEAN DEFAULT FALSE,
+                    skipped BOOLEAN DEFAULT FALSE,
+                    cancelled BOOLEAN DEFAULT FALSE,
+                    completed_at TIMESTAMP
+                )
+            ''')
+
+            # ========== НОВЫЕ ТАБЛИЦЫ ДЛЯ ЗАМЕТОК С РАЗДЕЛАМИ ==========
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS note_sections (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    name TEXT NOT NULL,
+                    icon TEXT DEFAULT '📝',
+                    sort_order INTEGER DEFAULT 0,
+                    UNIQUE(user_id, name)
+                )
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS notes (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    section_id INTEGER NOT NULL,
+                    title TEXT,
+                    content TEXT,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP,
+                    FOREIGN KEY (section_id) REFERENCES note_sections(id) ON DELETE CASCADE
+                )
+            ''')
+
+
             logging.info("✅ Все таблицы созданы")
 
     async def _migrate_reminder_settings(self):
         pass
+    # ========== МЕТОДЫ ДЛЯ ЗАДАЧ И РУТИНЫ ==========
+    async def add_task(self, user_id, title, task_type, **kwargs):
+        async with self.pool.acquire() as conn:
+            query = """
+                INSERT INTO tasks (user_id, title, task_type, recurrence_type, recurrence_interval, recurrence_days, start_date, start_time, remind_before_minutes, next_due)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                RETURNING id
+            """
+            row = await conn.fetchrow(query, user_id, title, task_type,
+                                      kwargs.get('recurrence_type'),
+                                      kwargs.get('recurrence_interval'),
+                                      kwargs.get('recurrence_days'),
+                                      kwargs.get('start_date'),
+                                      kwargs.get('start_time'),
+                                      kwargs.get('remind_before_minutes', 45),
+                                      kwargs.get('next_due'))
+            return row['id'] if row else None
+
+    async def get_upcoming_tasks(self, user_id, limit=20):
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT id, title, start_date, start_time, remind_before_minutes, next_due
+                FROM tasks
+                WHERE user_id = $1 AND task_type = 'once' AND is_active = TRUE AND next_due > NOW()
+                ORDER BY next_due LIMIT $2
+            """, user_id, limit)
+            return rows
+
+    async def get_task_by_id(self, task_id):
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow("SELECT * FROM tasks WHERE id = $1", task_id)
+
+    async def complete_task(self, task_id, user_id, completed=True, skipped=False, cancelled=False):
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO task_logs (task_id, user_id, due_date, completed, skipped, cancelled, completed_at)
+                VALUES ($1, $2, CURRENT_DATE, $3, $4, $5, NOW())
+            """, task_id, user_id, completed, skipped, cancelled)
+            await conn.execute("UPDATE tasks SET is_active = FALSE WHERE id = $1 AND task_type = 'once'", task_id)
+
+    async def postpone_task(self, task_id, minutes=60):
+        async with self.pool.acquire() as conn:
+            await conn.execute("UPDATE tasks SET next_due = NOW() + ($1 || ' minutes')::INTERVAL WHERE id = $2", minutes, task_id)
+
+    async def get_tasks_due_now(self, now_utc):
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT id, user_id, title, start_date, start_time
+                FROM tasks
+                WHERE task_type = 'once' AND is_active = TRUE AND next_due <= $1
+            """, now_utc)
+            return rows
+
+    async def get_recurring_tasks_by_user(self, user_id):
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT id, title, recurrence_type, recurrence_interval, recurrence_days, start_time, remind_before_minutes, is_active, created_at
+                FROM tasks WHERE user_id = $1 AND task_type = 'recurring' AND is_active = TRUE
+            """, user_id)
+            return rows
+
+    async def get_all_tasks_by_user(self, user_id):
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT id, title, task_type, start_date, start_time, recurrence_type, recurrence_interval, recurrence_days, is_active
+                FROM tasks WHERE user_id = $1 ORDER BY id DESC
+            """, user_id)
+            return rows
+
+    async def delete_task(self, task_id, user_id):
+        async with self.pool.acquire() as conn:
+            await conn.execute("DELETE FROM tasks WHERE id = $1 AND user_id = $2", task_id, user_id)
+
+    async def deactivate_task(self, task_id, user_id):
+        async with self.pool.acquire() as conn:
+            await conn.execute("UPDATE tasks SET is_active = FALSE WHERE id = $1 AND user_id = $2", task_id, user_id)
+
+    # ========== МЕТОДЫ ДЛЯ ЗАМЕТОК С РАЗДЕЛАМИ ==========
+    async def add_section(self, user_id, name, icon='📝'):
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                INSERT INTO note_sections (user_id, name, icon) VALUES ($1, $2, $3)
+                ON CONFLICT (user_id, name) DO NOTHING
+                RETURNING id
+            """, user_id, name, icon)
+            return row['id'] if row else None
+
+    async def get_sections(self, user_id):
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("SELECT id, name, icon, sort_order FROM note_sections WHERE user_id = $1 ORDER BY sort_order, name", user_id)
+            return rows
+
+    async def update_section(self, section_id, user_id, name=None, icon=None, sort_order=None):
+        async with self.pool.acquire() as conn:
+            if name:
+                await conn.execute("UPDATE note_sections SET name = $1 WHERE id = $2 AND user_id = $3", name, section_id, user_id)
+            if icon:
+                await conn.execute("UPDATE note_sections SET icon = $1 WHERE id = $2 AND user_id = $3", icon, section_id, user_id)
+            if sort_order is not None:
+                await conn.execute("UPDATE note_sections SET sort_order = $1 WHERE id = $2 AND user_id = $3", sort_order, section_id, user_id)
+
+    async def delete_section(self, section_id, user_id):
+        async with self.pool.acquire() as conn:
+            # Заметки удалятся автоматически из-за ON DELETE CASCADE
+            await conn.execute("DELETE FROM note_sections WHERE id = $1 AND user_id = $2", section_id, user_id)
+
+    async def add_note(self, user_id, section_id, title=None, content=None):
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                INSERT INTO notes (user_id, section_id, title, content) VALUES ($1, $2, $3, $4)
+                RETURNING id
+            """, user_id, section_id, title, content)
+            return row['id'] if row else None
+
+    async def get_notes_by_section(self, section_id, user_id):
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT id, title, content, created_at, updated_at FROM notes
+                WHERE section_id = $1 AND user_id = $2 ORDER BY created_at DESC
+            """, section_id, user_id)
+            return rows
+
+    async def get_note_by_id(self, note_id, user_id):
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow("SELECT * FROM notes WHERE id = $1 AND user_id = $2", note_id, user_id)
+
+    async def update_note(self, note_id, user_id, title=None, content=None):
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE notes SET title = COALESCE($1, title), content = COALESCE($2, content), updated_at = NOW()
+                WHERE id = $3 AND user_id = $4
+            """, title, content, note_id, user_id)
+
+    async def delete_note(self, note_id, user_id):
+        async with self.pool.acquire() as conn:
+            await conn.execute("DELETE FROM notes WHERE id = $1 AND user_id = $2", note_id, user_id)
 
     # ========== МЕТОДЫ ДЛЯ НАПОМИНАНИЙ ==========
     async def get_reminder_setting(self, user_id: int, setting_type: str):
