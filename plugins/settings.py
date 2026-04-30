@@ -65,11 +65,10 @@ async def back_to_main(message: types.Message, state: FSMContext):
 # ---------- НАСТРОЙКА НАПОМИНАНИЙ (выбор типа) ----------
 async def reminder_choose_type(message: types.Message, state: FSMContext):
     text = message.text
-    # Здесь все типы напоминаний, включая "📝 Итог дня"
     type_map = {
         "🛌 Сон": ("sleep", "Введи время для сна (ЧЧ:ММ, например 23:00):"),
         "⚡️ Чек-ины": ("checkins", "Введи время для чек-инов через запятую (12:00, 16:00, 20:00):"),
-        "📝 Итог дня": ("summary", "Введи время для итога дня (ЧЧ:ММ, например 22:30):"),
+        "🕐 Итог дня (напоминание)": ("summary", "Введи время для итога дня (ЧЧ:ММ, например 22:30):"),
         "💧 Вода": ("water", "Введи время для воды через запятую (10:00, 14:00, 18:00):"),
         "🍽 Еда": ("meals", "Введи время для приёмов пищи через запятую (09:00, 13:00, 19:00):")
     }
@@ -218,8 +217,8 @@ def register(dp: Dispatcher):
     dp.register_message_handler(quiet_hours, text="🕒 Тихий час", state="*")
     dp.register_message_handler(back_to_main, text="⬅️ Назад", state="*")
     
-    # Обработка выбора типа напоминания – здесь нет "📝 Итог дня" в виде отдельного текста, только внутри подменю
-    dp.register_message_handler(reminder_choose_type, text=["🛌 Сон", "⚡️ Чек-ины", "📝 Итог дня", "💧 Вода", "🍽 Еда", "⬅️ Назад"], state="*")
+    # Обработка выбора типа напоминания – используется новый текст для итога дня
+    dp.register_message_handler(reminder_choose_type, text=["🛌 Сон", "⚡️ Чек-ины", "🕐 Итог дня (напоминание)", "💧 Вода", "🍽 Еда", "⬅️ Назад"], state="*")
     dp.register_message_handler(reminder_action, state=SettingsStates.waiting_reminder_time)
     dp.register_message_handler(set_reminder_time, state=SettingsStates.waiting_reminder_time)
     
