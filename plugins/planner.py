@@ -3,12 +3,15 @@ from datetime import datetime, timedelta, time, date
 from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 from database import db
 from keyboards import get_main_menu, get_planner_keyboard
 
 logger = logging.getLogger(__name__)
+
+# Словарь для запоминания последнего task_id по user_id
+last_task_id = {}
 
 class AddTaskStates(StatesGroup):
     title = State()
@@ -327,19 +330,19 @@ async def should_run_today(routine, today_date):
         return (today_date.weekday() + 1) in routine['recurrence_days']
     return False
 
-# ========== НАПОМИНАНИЯ ==========
+# ========== НАПОМИНАНИЯ (Reply‑кнопки) ==========
 async def check_reminders():
     from bot import bot
     now_utc = datetime.utcnow()
     tasks = await db.get_tasks_due_now(now_utc)
     for task in tasks:
         user_id = task['user_id']
-        kb = InlineKeyboardMarkup(row_width=2)
-        kb.add(
-            InlineKeyboardButton("✅ Выполнил", callback_data=f"done_task_{task['id']}"),
-            InlineKeyboardButton("⏰ Отложить на час", callback_data=f"postpone_task_{task['id']}")
-        )
-        kb.add(InlineKeyboardButton("❌ Отменить", callback_data=f"cancel_task_{task['id']}"))
+        # Сохраняем task_id для последующей обработки нажатий
+        last_task_id[user_id] = task['id']
+
+        kb = ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.add("✅ Выполнил", "⏰ Отложить на час")
+        kb.add("❌ Отменить")
         try:
             await bot.send_message(
                 user_id,
@@ -347,7 +350,6 @@ async def check_reminders():
                 reply_markup=kb,
                 parse_mode="Markdown"
             )
-            # Деактивируем задачу, чтобы не слать повторно
             await db.deactivate_task(task['id'], user_id)
         except Exception as e:
             logging.error(f"Не удалось отправить напоминание пользователю {user_id}: {e}")
@@ -367,7 +369,6 @@ async def check_routines():
         for r in routines:
             if await should_run_today(r, today):
                 remind_minutes = r['remind_before_minutes'] or 15
-                # Безопасное извлечение времени (строка или datetime.time)
                 t = r['start_time']
                 if isinstance(t, str):
                     start_hour, start_min = map(int, t.split(':'))
@@ -376,12 +377,12 @@ async def check_routines():
                 start_dt = datetime.combine(today, time(start_hour, start_min))
                 remind_dt = start_dt - timedelta(minutes=remind_minutes)
                 if remind_dt.strftime("%H:%M") == current_time:
-                    kb = InlineKeyboardMarkup(row_width=2)
-                    kb.add(
-                        InlineKeyboardButton("✅ Выполнена", callback_data=f"done_routine_{r['id']}"),
-                        InlineKeyboardButton("⏰ Напомнить позже", callback_data=f"snooze_routine_{r['id']}")
-                    )
-                    kb.add(InlineKeyboardButton("❌ Пропустить", callback_data=f"skip_routine_{r['id']}"))
+                    # Сохраняем routine task_id (можно и не сохранять, но для единообразия)
+                    last_task_id[user_id] = r['id']
+
+                    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+                    kb.add("✅ Выполнена", "⏰ Напомнить позже")
+                    kb.add("❌ Пропустить")
                     await bot.send_message(
                         user_id,
                         f"🔄 НАПОМИНАНИЕ О РУТИНЕ:\n\n*{r['title']}*\n🕒 {t if isinstance(t, str) else t.strftime('%H:%M')}",
@@ -389,50 +390,72 @@ async def check_routines():
                         parse_mode="Markdown"
                     )
 
-# ---------- Обработчики колбэков ----------
-async def done_task_handler(callback: types.CallbackQuery):
-    task_id = int(callback.data.split("_")[2])
-    await db.complete_task(task_id, callback.from_user.id, completed=True)
-    await callback.answer("✅ Дело выполнено!")
-    await callback.message.delete()
+# ---------- Обработчики Reply‑кнопок ----------
+async def complete_task_handler(message: types.Message):
+    user_id = message.from_user.id
+    task_id = last_task_id.get(user_id)
+    if task_id:
+        await db.complete_task(task_id, user_id, completed=True)
+        await message.answer("✅ Дело выполнено!", reply_markup=get_main_menu())
+        del last_task_id[user_id]
+    else:
+        await message.answer("Нет активных напоминаний.", reply_markup=get_main_menu())
 
-async def postpone_task_handler(callback: types.CallbackQuery):
-    task_id = int(callback.data.split("_")[2])
-    await db.postpone_task(task_id, 60)
-    await callback.answer("⏰ Напомню через час.")
-    await callback.message.delete()
+async def postpone_task_handler(message: types.Message):
+    user_id = message.from_user.id
+    task_id = last_task_id.get(user_id)
+    if task_id:
+        await db.postpone_task(task_id, 60)
+        await message.answer("⏰ Напомню через час.", reply_markup=get_main_menu())
+        del last_task_id[user_id]
+    else:
+        await message.answer("Нет активных напоминаний.", reply_markup=get_main_menu())
 
-async def cancel_task_handler(callback: types.CallbackQuery):
-    task_id = int(callback.data.split("_")[2])
-    await db.complete_task(task_id, callback.from_user.id, cancelled=True)
-    await callback.answer("❌ Дело отменено.")
-    await callback.message.delete()
+async def cancel_task_handler(message: types.Message):
+    user_id = message.from_user.id
+    task_id = last_task_id.get(user_id)
+    if task_id:
+        await db.complete_task(task_id, user_id, cancelled=True)
+        await message.answer("❌ Дело отменено.", reply_markup=get_main_menu())
+        del last_task_id[user_id]
+    else:
+        await message.answer("Нет активных напоминаний.", reply_markup=get_main_menu())
 
-async def done_routine_handler(callback: types.CallbackQuery):
-    task_id = int(callback.data.split("_")[2])
-    user_id = callback.from_user.id
-    async with db.pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO task_logs (task_id, user_id, due_date, completed, completed_at)
-            VALUES ($1, $2, CURRENT_DATE, TRUE, NOW())
-        """, task_id, user_id)
-    await callback.answer("✅ Рутина выполнена!")
-    await callback.message.delete()
+async def routine_done_handler(message: types.Message):
+    user_id = message.from_user.id
+    task_id = last_task_id.get(user_id)
+    if task_id:
+        async with db.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO task_logs (task_id, user_id, due_date, completed, completed_at)
+                VALUES ($1, $2, CURRENT_DATE, TRUE, NOW())
+            """, task_id, user_id)
+        await message.answer("✅ Рутина выполнена!", reply_markup=get_main_menu())
+        del last_task_id[user_id]
+    else:
+        await message.answer("Нет активных напоминаний.", reply_markup=get_main_menu())
 
-async def skip_routine_handler(callback: types.CallbackQuery):
-    task_id = int(callback.data.split("_")[2])
-    user_id = callback.from_user.id
-    async with db.pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO task_logs (task_id, user_id, due_date, skipped, completed_at)
-            VALUES ($1, $2, CURRENT_DATE, TRUE, NOW())
-        """, task_id, user_id)
-    await callback.answer("❌ Пропущено.")
-    await callback.message.delete()
+async def routine_skip_handler(message: types.Message):
+    user_id = message.from_user.id
+    task_id = last_task_id.get(user_id)
+    if task_id:
+        async with db.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO task_logs (task_id, user_id, due_date, skipped, completed_at)
+                VALUES ($1, $2, CURRENT_DATE, TRUE, NOW())
+            """, task_id, user_id)
+        await message.answer("❌ Пропущено.", reply_markup=get_main_menu())
+        del last_task_id[user_id]
+    else:
+        await message.answer("Нет активных напоминаний.", reply_markup=get_main_menu())
 
-async def snooze_routine_handler(callback: types.CallbackQuery):
-    await callback.answer("⏰ Напомню через 30 минут.")
-    await callback.message.delete()
+async def routine_snooze_handler(message: types.Message):
+    user_id = message.from_user.id
+    # Просто подтверждаем, никаких действий с базой
+    await message.answer("⏰ Напомню через 30 минут.", reply_markup=get_main_menu())
+    # Удаляем из last_task_id, чтобы не было ложных срабатываний
+    if user_id in last_task_id:
+        del last_task_id[user_id]
 
 # ---------- Регистрация ----------
 def register(dp: Dispatcher):
@@ -454,9 +477,10 @@ def register(dp: Dispatcher):
     dp.register_message_handler(add_routine_time, state=AddRoutineStates.time)
     dp.register_message_handler(add_routine_remind, state=AddRoutineStates.remind)
 
-    dp.register_callback_query_handler(done_task_handler, lambda c: c.data.startswith('done_task_'))
-    dp.register_callback_query_handler(postpone_task_handler, lambda c: c.data.startswith('postpone_task_'))
-    dp.register_callback_query_handler(cancel_task_handler, lambda c: c.data.startswith('cancel_task_'))
-    dp.register_callback_query_handler(done_routine_handler, lambda c: c.data.startswith('done_routine_'))
-    dp.register_callback_query_handler(skip_routine_handler, lambda c: c.data.startswith('skip_routine_'))
-    dp.register_callback_query_handler(snooze_routine_handler, lambda c: c.data.startswith('snooze_routine_'))
+    # Reply‑обработчики
+    dp.register_message_handler(complete_task_handler, text="✅ Выполнил", state="*")
+    dp.register_message_handler(postpone_task_handler, text="⏰ Отложить на час", state="*")
+    dp.register_message_handler(cancel_task_handler, text="❌ Отменить", state="*")
+    dp.register_message_handler(routine_done_handler, text="✅ Выполнена", state="*")
+    dp.register_message_handler(routine_snooze_handler, text="⏰ Напомнить позже", state="*")
+    dp.register_message_handler(routine_skip_handler, text="❌ Пропустить", state="*")
