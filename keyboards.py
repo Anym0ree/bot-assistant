@@ -49,7 +49,7 @@ def get_reminder_settings_keyboard():
     buttons = [
         [KeyboardButton(text="🛌 Сон")],
         [KeyboardButton(text="⚡️ Чек-ины")],
-        [KeyboardButton(text="📝 Итог дня")],
+        [KeyboardButton(text="🕐 Итог дня (напоминание)")],   
         [KeyboardButton(text="💧 Вода")],
         [KeyboardButton(text="🍽 Еда")],
         [KeyboardButton(text="⬅️ Назад")]
