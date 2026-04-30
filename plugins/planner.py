@@ -347,6 +347,7 @@ async def check_reminders():
                 reply_markup=kb,
                 parse_mode="Markdown"
             )
+            # Деактивируем задачу, чтобы не слать повторно
             await db.deactivate_task(task['id'], user_id)
         except Exception as e:
             logging.error(f"Не удалось отправить напоминание пользователю {user_id}: {e}")
@@ -366,7 +367,12 @@ async def check_routines():
         for r in routines:
             if await should_run_today(r, today):
                 remind_minutes = r['remind_before_minutes'] or 15
-                start_hour, start_min = map(int, r['start_time'].split(':'))
+                # Безопасное извлечение времени (строка или datetime.time)
+                t = r['start_time']
+                if isinstance(t, str):
+                    start_hour, start_min = map(int, t.split(':'))
+                else:
+                    start_hour, start_min = t.hour, t.minute
                 start_dt = datetime.combine(today, time(start_hour, start_min))
                 remind_dt = start_dt - timedelta(minutes=remind_minutes)
                 if remind_dt.strftime("%H:%M") == current_time:
@@ -378,12 +384,12 @@ async def check_routines():
                     kb.add(InlineKeyboardButton("❌ Пропустить", callback_data=f"skip_routine_{r['id']}"))
                     await bot.send_message(
                         user_id,
-                        f"🔄 НАПОМИНАНИЕ О РУТИНЕ:\n\n*{r['title']}*\n🕒 {r['start_time']}",
+                        f"🔄 НАПОМИНАНИЕ О РУТИНЕ:\n\n*{r['title']}*\n🕒 {t if isinstance(t, str) else t.strftime('%H:%M')}",
                         reply_markup=kb,
                         parse_mode="Markdown"
                     )
 
-# ---------- Колбэки ----------
+# ---------- Обработчики колбэков ----------
 async def done_task_handler(callback: types.CallbackQuery):
     task_id = int(callback.data.split("_")[2])
     await db.complete_task(task_id, callback.from_user.id, completed=True)
