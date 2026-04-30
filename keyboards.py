@@ -8,18 +8,18 @@ def get_main_menu():
         [KeyboardButton(text="⚡️ Чек-ин")],
         [KeyboardButton(text="📝 Итог дня")],
         [KeyboardButton(text="🍽🥤 Еда и напитки")],
-        [KeyboardButton(text="📝 Заметки и напоминания")],
-        [KeyboardButton(text="📅 История")],   
+        [KeyboardButton(text="📅 Мой день")],          # новая
+        [KeyboardButton(text="📝 Заметки и идеи")],    # новая
+        [KeyboardButton(text="📅 История")],
         [KeyboardButton(text="🤖 AI-совет")],
         [KeyboardButton(text="📊 Статистика")],
         [KeyboardButton(text="📤 Экспорт")],
         [KeyboardButton(text="🔄 Конвертер")],
         [KeyboardButton(text="🏆 Достижения")],
-        [KeyboardButton(text="🌤️ Погода")],
+        [KeyboardButton(text="🌤️ Погода")],            
         [KeyboardButton(text="⚙️ Настройки")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
-
 # ========== СТАТИСТИКА ==========
 def get_stats_period_keyboard():
     buttons = [
@@ -337,3 +337,47 @@ def get_reminder_action_keyboard_inline(reminder_id):
         [InlineKeyboardButton("⬅️ К списку", callback_data="reminders_back")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+def get_planner_keyboard():
+    buttons = [
+        [KeyboardButton(text="📋 Что сегодня?")],
+        [KeyboardButton(text="➕ Добавить дело")],
+        [KeyboardButton(text="🔄 Добавить рутину")],
+        [KeyboardButton(text="🗓️ Мои дела")],
+        [KeyboardButton(text="📋 Мои рутины")],
+        [KeyboardButton(text="⬅️ Назад")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+def get_notes_main_keyboard():
+    buttons = [
+        [KeyboardButton(text="📂 Мои разделы")],
+        [KeyboardButton(text="➕ Новый раздел")],
+        [KeyboardButton(text="⬅️ Назад")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+def get_section_keyboard(sections, page=0, per_page=5):
+    buttons = []
+    start = page * per_page
+    end = start + per_page
+    for s in sections[start:end]:
+        buttons.append([KeyboardButton(text=f"{s['icon']} {s['name']}")])
+    if len(sections) > per_page:
+        nav = []
+        if page > 0:
+            nav.append(KeyboardButton(text="◀️ Предыдущая страница"))
+        if end < len(sections):
+            nav.append(KeyboardButton(text="Следующая страница ▶️"))
+        if nav:
+            buttons.append(nav)
+    buttons.append([KeyboardButton(text="⬅️ Назад")])
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+def get_note_actions_keyboard():
+    buttons = [
+        [KeyboardButton(text="➕ Новая заметка")],
+        [KeyboardButton(text="✏️ Редактировать")],
+        [KeyboardButton(text="🗑 Удалить заметку")],
+        [KeyboardButton(text="⬅️ Назад в раздел")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
