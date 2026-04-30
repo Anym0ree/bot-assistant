@@ -40,10 +40,7 @@ async def toggle_ai(message: types.Message, state: FSMContext):
         row = await conn.fetchrow("SELECT ai_enabled FROM user_settings WHERE user_id = $1", user_id)
         current = row['ai_enabled'] if row else 1
         new_val = 0 if current else 1
-        await conn.execute("""
-            INSERT INTO user_settings (user_id, ai_enabled) VALUES ($1, $2)
-            ON CONFLICT (user_id) DO UPDATE SET ai_enabled = $2
-        """, user_id, new_val)
+        await conn.execute("INSERT INTO user_settings (user_id, ai_enabled) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET ai_enabled = $2", user_id, new_val)
     await message.answer(f"🤖 AI-совет {'включён' if new_val else 'выключен'}")
     await settings_menu(message, state)
 
@@ -53,10 +50,7 @@ async def toggle_weekly_reports(message: types.Message, state: FSMContext):
         row = await conn.fetchrow("SELECT weekly_report_enabled FROM user_settings WHERE user_id = $1", user_id)
         current = row['weekly_report_enabled'] if row else 1
         new_val = 0 if current else 1
-        await conn.execute("""
-            INSERT INTO user_settings (user_id, weekly_report_enabled) VALUES ($1, $2)
-            ON CONFLICT (user_id) DO UPDATE SET weekly_report_enabled = $2
-        """, user_id, new_val)
+        await conn.execute("INSERT INTO user_settings (user_id, weekly_report_enabled) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET weekly_report_enabled = $2", user_id, new_val)
     await message.answer(f"📊 Отчёты {'включены' if new_val else 'выключены'}")
     await settings_menu(message, state)
 
@@ -68,10 +62,12 @@ async def back_to_main(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("Главное меню", reply_markup=get_main_menu())
 
+# ---------- НАСТРОЙКА НАПОМИНАНИЙ (выбор типа) ----------
 async def reminder_choose_type(message: types.Message, state: FSMContext):
     text = message.text
+    # Здесь все типы напоминаний, включая "📝 Итог дня"
     type_map = {
-        "🛌 Сон": ("sleep", "Введи время для НАПОМИНАНИЯ о сне (ЧЧ:ММ, например 22:00):"),
+        "🛌 Сон": ("sleep", "Введи время для сна (ЧЧ:ММ, например 23:00):"),
         "⚡️ Чек-ины": ("checkins", "Введи время для чек-инов через запятую (12:00, 16:00, 20:00):"),
         "📝 Итог дня": ("summary", "Введи время для итога дня (ЧЧ:ММ, например 22:30):"),
         "💧 Вода": ("water", "Введи время для воды через запятую (10:00, 14:00, 18:00):"),
@@ -132,6 +128,7 @@ async def set_reminder_time(message: types.Message, state: FSMContext):
             await message.answer("❌ Неверный формат. Введи время через запятую (например, 12:00, 16:00)")
     await reminder_settings_menu(message, state)
 
+# ---------- ПРОФИЛЬ ----------
 async def profile_age(message: types.Message, state: FSMContext):
     try:
         age = int(message.text)
@@ -170,6 +167,7 @@ async def profile_weight(message: types.Message, state: FSMContext):
     except:
         await message.answer("❌ Введи число.")
 
+# ---------- ТИХИЙ ЧАС ----------
 async def dnd_start(message: types.Message, state: FSMContext):
     if not re.match(r"^(2[0-3]|[01]?[0-9]):[0-5][0-9]$", message.text):
         await message.answer("❌ Неверный формат. Введи ЧЧ:ММ")
@@ -195,6 +193,7 @@ async def dnd_end(message: types.Message, state: FSMContext):
     await message.answer(f"✅ Тихий час установлен с {start} до {end}")
     await settings_menu(message, state)
 
+# ---------- СМЕНА ЧАСОВОГО ПОЯСА ----------
 async def set_timezone_offset(message: types.Message, state: FSMContext):
     try:
         offset = int(message.text)
@@ -208,6 +207,7 @@ async def set_timezone_offset(message: types.Message, state: FSMContext):
     except:
         await message.answer("❌ Введи целое число (например, +3)")
 
+# ---------- РЕГИСТРАЦИЯ ----------
 def register(dp: Dispatcher):
     dp.register_message_handler(settings_menu, text="⚙️ Настройки", state="*")
     dp.register_message_handler(change_timezone, text="🌍 Сменить часовой пояс", state="*")
@@ -217,12 +217,16 @@ def register(dp: Dispatcher):
     dp.register_message_handler(toggle_weekly_reports, text="📊 Еженедельные отчёты (вкл/выкл)", state="*")
     dp.register_message_handler(quiet_hours, text="🕒 Тихий час", state="*")
     dp.register_message_handler(back_to_main, text="⬅️ Назад", state="*")
+    
+    # Обработка выбора типа напоминания – здесь нет "📝 Итог дня" в виде отдельного текста, только внутри подменю
     dp.register_message_handler(reminder_choose_type, text=["🛌 Сон", "⚡️ Чек-ины", "📝 Итог дня", "💧 Вода", "🍽 Еда", "⬅️ Назад"], state="*")
     dp.register_message_handler(reminder_action, state=SettingsStates.waiting_reminder_time)
     dp.register_message_handler(set_reminder_time, state=SettingsStates.waiting_reminder_time)
+    
     dp.register_message_handler(profile_age, state=SettingsStates.waiting_for_profile_age)
     dp.register_message_handler(profile_height, state=SettingsStates.waiting_for_profile_height)
     dp.register_message_handler(profile_weight, state=SettingsStates.waiting_for_profile_weight)
+    
     dp.register_message_handler(dnd_start, state=SettingsStates.waiting_for_dnd_start)
     dp.register_message_handler(dnd_end, state=SettingsStates.waiting_for_dnd_end)
     dp.register_message_handler(set_timezone_offset, state=SettingsStates.waiting_for_timezone_offset)
