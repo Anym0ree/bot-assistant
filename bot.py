@@ -17,7 +17,7 @@ from keyboards import get_main_menu
 from utils import set_bot_instance, safe_finish, delete_dialog_message
 from reminder_utils import load_reminder_settings, get_default_reminders
 import ai_advisor as ai_adv_module
-from plugins.planner import check_reminders
+from plugins.planner import check_reminders, check_routines
 
 logging.basicConfig(level=logging.INFO)
 
