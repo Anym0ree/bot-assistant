@@ -25,7 +25,7 @@ async def notes_main(message: types.Message, state: FSMContext):
     sections = await db.get_sections(user_id)
     if not sections:
         await db.add_section(user_id, "Мысли", "💭")
-        await db.add_section(user_id, "Заметки", "📝")
+        await db.add_section(user_id, "Заметки", "📂")
         await db.add_section(user_id, "Идеи", "💡")
     await message.answer("📝 Заметки и идеи", reply_markup=get_notes_main_keyboard())
 
@@ -92,7 +92,6 @@ async def section_callback(message: types.Message, state: FSMContext):
         await message.answer(text, parse_mode="Markdown", reply_markup=get_note_actions_keyboard())
         await state.update_data(current_notes=notes)
 
-# ---------- Клавиатура действий с заметками (Reply) ----------
 def get_note_actions_keyboard():
     buttons = [
         [KeyboardButton("➕ Новая заметка")],
@@ -109,8 +108,8 @@ async def new_section(message: types.Message, state: FSMContext):
 
 async def create_section(message: types.Message, state: FSMContext):
     name = message.text.strip()
-    icon = "📝"
-    if name and name[0] in "📝📌💡⭐❤️🔥✅":
+    icon = "📂"
+    if name and name[0] in "📂📌💡⭐❤️🔥✅":
         icon = name[0]
         name = name[1:].lstrip()
     user_id = message.from_user.id
@@ -238,8 +237,20 @@ def register(dp: Dispatcher):
     dp.register_message_handler(new_note_content, state=NoteStates.new_note_content)
     dp.register_message_handler(edit_note_title, state=NoteStates.edit_note_title)
     dp.register_message_handler(edit_note_content, state=NoteStates.edit_note_content)
-    dp.register_message_handler(section_callback, lambda m: m.text and len(m.text) > 2 and m.text[0] in '📝📌💡⭐❤️🔥✅', state="*")
-    dp.register_message_handler(change_section_page, lambda m: m.text and ("страница разделов" in m.text), state="*")
+    
+    # ИСПРАВЛЕНО: не перехватываем "📝 Итог дня" и "📝 Заметки и идеи"
+    dp.register_message_handler(section_callback,
+        lambda m: m.text and m.text[0] in '📝📂📌💡⭐❤️🔥✅' 
+                  and m.text not in ('📝 Итог дня', '📝 Заметки и идеи'),
+        state="*")
+    
+    dp.register_message_handler(change_section_page,
+        lambda m: m.text and "страница разделов" in m.text,
+        state="*")
 
-    dp.register_callback_query_handler(edit_note_callback, lambda c: c.data.startswith('editnote_'), state=NoteStates.edit_note_select)
-    dp.register_callback_query_handler(delete_note_callback, lambda c: c.data.startswith('delnote_'), state=NoteStates.delete_note_select)
+    dp.register_callback_query_handler(edit_note_callback,
+        lambda c: c.data.startswith('editnote_'),
+        state=NoteStates.edit_note_select)
+    dp.register_callback_query_handler(delete_note_callback,
+        lambda c: c.data.startswith('delnote_'),
+        state=NoteStates.delete_note_select)
