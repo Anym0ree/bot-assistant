@@ -8,6 +8,17 @@ from config import DATABASE_URL
 logging.basicConfig(level=logging.INFO)
 
 class Database:
+    async def add_note_simple(self, user_id, text):
+    """Добавляет заметку в старую таблицу notes"""
+    local_dt = await self.get_user_local_datetime(user_id)
+    async with self.pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO notes (user_id, text, date, time, timestamp) VALUES ($1, $2, $3, $4, NOW()) RETURNING id",
+            user_id, text,
+            local_dt.strftime("%Y-%m-%d"),
+            local_dt.strftime("%H:%M")
+        )
+        return row['id'] if row else None
     def __init__(self):
         self.pool = None
 
