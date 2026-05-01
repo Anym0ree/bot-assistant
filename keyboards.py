@@ -39,8 +39,6 @@ def get_settings_keyboard():
         [KeyboardButton(text="🤖 AI-совет (вкл/выкл)")],
         [KeyboardButton(text="📊 Еженедельные отчёты (вкл/выкл)")],
         [KeyboardButton(text="🕒 Тихий час")],
-        [KeyboardButton(text="🌍 Указать город")],
-        [KeyboardButton(text="🌤️ Уведомления о погоде")],
         [KeyboardButton(text="⬅️ Назад")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
