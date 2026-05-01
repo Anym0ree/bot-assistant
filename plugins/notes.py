@@ -21,19 +21,21 @@ def get_notes_menu_keyboard():
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 def get_cancel_keyboard():
-    return ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton("❌ Отмена"))
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add(KeyboardButton("❌ Отмена"))
+    return kb
 
 # ---------- Главное меню заметок ----------
 async def notes_main(message: types.Message, state: FSMContext):
     await state.finish()
-    await message.answer("📝 *Заметки и идеи*\n\nВыбери действие:", reply_markup=get_notes_menu_keyboard(), parse_mode="Markdown")
+    await message.answer("📝 Заметки и идеи\n\nВыбери действие:", reply_markup=get_notes_menu_keyboard())
 
 # ---------- Список заметок ----------
 async def list_notes(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     notes = await db.get_notes(user_id)
     if not notes:
-        await message.answer("У тебя пока нет заметок. Создай первую!", reply_markup=get_notes_menu_keyboard())
+        await message.answer("У тебя пока нет заметок.", reply_markup=get_notes_menu_keyboard())
         return
 
     text = "📋 *Твои заметки:*\n\n"
@@ -46,7 +48,7 @@ async def list_notes(message: types.Message, state: FSMContext):
 
 # ---------- Создание заметки ----------
 async def new_note_start(message: types.Message, state: FSMContext):
-    await message.answer("📝 Напиши текст заметки (можно с переносами строк). Или нажми ❌ Отмена.", reply_markup=get_cancel_keyboard())
+    await message.answer("📝 Напиши текст заметки. Или нажми ❌ Отмена.", reply_markup=get_cancel_keyboard())
     await NoteStates.waiting_for_text.set()
 
 async def new_note_save(message: types.Message, state: FSMContext):
@@ -66,7 +68,7 @@ async def new_note_save(message: types.Message, state: FSMContext):
 async def edit_note_start(message: types.Message, state: FSMContext):
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
-        await message.answer("❌ Укажи номер заметки. Пример: `редактировать заметку 2`", parse_mode="Markdown")
+        await message.answer("❌ Укажи номер. Пример: `редактировать заметку 2`", parse_mode="Markdown")
         return
     try:
         num = int(parts[2])
@@ -77,7 +79,7 @@ async def edit_note_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     notes = await db.get_notes(user_id)
     if not notes or num < 1 or num > len(notes):
-        await message.answer(f"❌ Нет заметки с номером {num}. Всего заметок: {len(notes)}")
+        await message.answer(f"❌ Нет заметки с номером {num}. Всего: {len(notes)}")
         return
 
     note = notes[num - 1]
@@ -96,13 +98,15 @@ async def edit_note_save(message: types.Message, state: FSMContext):
         async with db.pool.acquire() as conn:
             await conn.execute("UPDATE notes SET text = $1, timestamp = NOW() WHERE id = $2", message.text, note_id)
         await message.answer("✅ Заметка обновлена!", reply_markup=get_notes_menu_keyboard())
+    else:
+        await message.answer("❌ Ошибка.", reply_markup=get_notes_menu_keyboard())
     await state.finish()
 
 # ---------- Удаление заметки ----------
 async def delete_note_start(message: types.Message):
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
-        await message.answer("❌ Укажи номер заметки. Пример: `удалить заметку 1`", parse_mode="Markdown")
+        await message.answer("❌ Укажи номер. Пример: `удалить заметку 1`", parse_mode="Markdown")
         return
     try:
         num = int(parts[2])
@@ -113,7 +117,7 @@ async def delete_note_start(message: types.Message):
     user_id = message.from_user.id
     notes = await db.get_notes(user_id)
     if not notes or num < 1 or num > len(notes):
-        await message.answer(f"❌ Нет заметки с номером {num}. Всего заметок: {len(notes)}")
+        await message.answer(f"❌ Нет заметки с номером {num}. Всего: {len(notes)}")
         return
 
     note = notes[num - 1]
