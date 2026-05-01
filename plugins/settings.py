@@ -77,10 +77,7 @@ async def profile_weight(message: types.Message, state: FSMContext):
         weight = int(message.text)
         if 10 <= weight <= 300:
             data = await state.get_data()
-            await db.update_user_profile(message.from_user.id,
-                                         age=data['age'],
-                                         height=data['height'],
-                                         weight=weight)
+            await db.update_user_profile(message.from_user.id, age=data['age'], height=data['height'], weight=weight)
             await state.finish()
             await message.answer("✅ Профиль обновлён!")
             await settings_menu(message, state)
