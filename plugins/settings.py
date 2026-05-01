@@ -4,6 +4,7 @@ from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from plugins.weather import update_geo
 
 from database import db
 from keyboards import get_main_menu, get_settings_keyboard
@@ -175,6 +176,7 @@ async def reminder_toggle_handler(message: types.Message, state: FSMContext):
     await reminder_toggle_menu(message, state)
 
 def register(dp: Dispatcher):
+    dp.register_message_handler(update_geo, text="📍 Обновить гео", state="*")
     dp.register_message_handler(settings_menu, text="⚙️ Настройки", state="*")
     dp.register_message_handler(change_timezone, text="🌍 Сменить часовой пояс", state="*")
     dp.register_message_handler(set_timezone_offset, state=SettingsStates.waiting_for_timezone_offset)
