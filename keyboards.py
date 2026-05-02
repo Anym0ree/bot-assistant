@@ -4,19 +4,17 @@ from math import ceil
 # ========== ГЛАВНОЕ МЕНЮ ==========
 def get_main_menu():
     buttons = [
+        [KeyboardButton(text="📋 Сегодня")],
         [KeyboardButton(text="🛌 Сон")],
         [KeyboardButton(text="⚡️ Чек-ин")],
         [KeyboardButton(text="📝 Итог дня")],
         [KeyboardButton(text="🍽🥤 Еда и напитки")],
-        [KeyboardButton(text="📅 Мой день")],          # новая
-        [KeyboardButton(text="📝 Заметки и идеи")],    # новая
+        [KeyboardButton(text="📅 Мой день")],
+        [KeyboardButton(text="📝 Заметки и идеи")],
         [KeyboardButton(text="📅 История")],
         [KeyboardButton(text="🤖 AI-совет")],
         [KeyboardButton(text="📊 Статистика")],
-        [KeyboardButton(text="📤 Экспорт")],
-        [KeyboardButton(text="🔄 Конвертер")],
-        [KeyboardButton(text="🏆 Достижения")],
-        [KeyboardButton(text="🌤️ Погода")],            
+        [KeyboardButton(text="🌤️ Погода")],
         [KeyboardButton(text="⚙️ Настройки")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
