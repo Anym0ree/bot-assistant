@@ -17,7 +17,7 @@ from keyboards import get_main_menu
 from utils import set_bot_instance, safe_finish, delete_dialog_message
 from reminder_utils import load_reminder_settings, get_default_reminders
 import ai_advisor as ai_adv_module
-from plugins.planner import check_reminders, check_routines
+from plugins.planner import check_reminders
 
 logging.basicConfig(level=logging.INFO)
 
@@ -118,7 +118,6 @@ async def on_startup_polling(dp):
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_job(check_reminders, IntervalTrigger(minutes=1))
     scheduler.add_job(check_all_reminders, IntervalTrigger(minutes=1))
-    scheduler.add_job(check_routines, IntervalTrigger(minutes=1))
     scheduler.add_job(remind_update_profile, CronTrigger(day=1, hour=12, minute=0, timezone="UTC"))  # 1-го числа каждого месяца в 12:00 UTC
     scheduler.start()
     logging.info("✅ Бот запущен в polling режиме!")
