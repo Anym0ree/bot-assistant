@@ -34,7 +34,7 @@ def get_stats_period_keyboard():
 def get_settings_keyboard():
     buttons = [
         [KeyboardButton(text="🌍 Сменить часовой пояс")],
-        [KeyboardButton(text="📍 Обновить гео")],
+        [KeyboardButton(text="🏙️ Указать город")],
         [KeyboardButton(text="🔔 Настройка напоминаний")],
         [KeyboardButton(text="✏️ Редактировать профиль")],
         [KeyboardButton(text="🤖 AI-совет (вкл/выкл)")],
