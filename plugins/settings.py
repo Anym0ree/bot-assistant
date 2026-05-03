@@ -17,6 +17,7 @@ class SettingsStates(StatesGroup):
     waiting_for_profile_age = State()
     waiting_for_profile_height = State()
     waiting_for_profile_weight = State()
+    waiting_for_nickname = State()
     waiting_reminder_time = State()
     waiting_reminder_value = State()
     waiting_for_timezone_offset = State()
@@ -74,18 +75,20 @@ async def set_city_save(message: types.Message, state: FSMContext):
 async def edit_profile(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     profile = await db.get_user_profile(user_id)
-    await message.answer(
-        f"📝 *Твой профиль*\n\n"
-        f"Возраст: {profile['age'] or 'не указан'}\n"
-        f"Рост: {profile['height'] or 'не указан'} см\n"
-        f"Вес: {profile['weight'] or 'не указан'} кг\n\n"
-        f"Что хочешь изменить?\n"
-        f"[🔄 Возраст] [🔄 Рост] [🔄 Вес] [⬅️ Назад]",
-        parse_mode="Markdown",
-        reply_markup=ReplyKeyboardMarkup(resize_keyboard=True).add(
-            KeyboardButton("🔄 Возраст"), KeyboardButton("🔄 Рост"), KeyboardButton("🔄 Вес"), KeyboardButton("⬅️ Назад")
-        )
-    )
+    nickname = await db.get_nickname(user_id)
+
+    text = "📝 *Твой профиль*\n\n"
+    text += f"Возраст: {profile['age'] or 'не указан'}\n"
+    text += f"Рост: {profile['height'] or 'не указан'} см\n"
+    text += f"Вес: {profile['weight'] or 'не указан'} кг\n"
+    text += f"Никнейм: {nickname or 'не задан'}\n\n"
+    text += "Что хочешь изменить?"
+
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add(KeyboardButton("🔄 Возраст"), KeyboardButton("🔄 Рост"))
+    kb.add(KeyboardButton("🔄 Вес"), KeyboardButton("📝 Задать никнейм"))
+    kb.add(KeyboardButton("⬅️ Назад"))
+    await message.answer(text, reply_markup=kb, parse_mode="Markdown")
 
 async def profile_age_start(message: types.Message, state: FSMContext):
     await message.answer("Введи возраст (1-120):")
@@ -150,6 +153,25 @@ async def profile_weight_save(message: types.Message, state: FSMContext):
     except:
         await message.answer("❌ Введи число.")
 
+# ----- Никнейм -----
+async def nickname_start(message: types.Message, state: FSMContext):
+    await message.answer("Введи новый никнейм (до 30 символов):")
+    await SettingsStates.waiting_for_nickname.set()
+
+async def nickname_save(message: types.Message, state: FSMContext):
+    if message.text == "⬅️ Назад":
+        await state.finish()
+        await edit_profile(message, state)
+        return
+    nickname = message.text.strip()
+    if len(nickname) > 30:
+        await message.answer("Слишком длинный. Не больше 30 символов.")
+        return
+    await db.set_nickname(message.from_user.id, nickname)
+    await state.finish()
+    await message.answer(f"✅ Никнейм установлен: {nickname}")
+    await edit_profile(message, state)
+
 # ========== AI И ОТЧЁТЫ ==========
 async def toggle_ai(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -206,7 +228,7 @@ async def dnd_end(message: types.Message, state: FSMContext):
     await message.answer(f"✅ Тихий час: {start} – {end}")
     await settings_menu(message, state)
 
-# ========== НАСТРОЙКА УВЕДОМЛЕНИЙ (Reply-кнопки) ==========
+# ========== НАСТРОЙКА УВЕДОМЛЕНИЙ ==========
 REMINDER_TYPES = {
     "🛌 Сон": "sleep",
     "⚡️ Чек-ины": "checkins",
@@ -243,15 +265,13 @@ async def reminder_settings_menu(message: types.Message, state: FSMContext):
 
 async def reminder_toggle(message: types.Message, state: FSMContext):
     text = message.text
-    # Проверяем, это кнопка «✅ Тип» или «❌ Тип»
     for label, key in REMINDER_TYPES.items():
         if text in [f"✅ {label}", f"❌ {label}"]:
             user_id = message.from_user.id
             settings = await load_reminder_settings(user_id)
             curr = settings.get(key, {"enabled": False, "times": []})
-            new_enabled = text.startswith("❌")  # если нажали "❌ Сон" — значит хотим выключить
-            # Инвертируем: если сейчас включено (стоит ❌), выключаем; если выключено (✅), включаем
-            if text.startswith("❌"):
+            new_enabled = text.startswith("❌")
+            if new_enabled:
                 new_enabled = False
             else:
                 new_enabled = True
@@ -260,13 +280,6 @@ async def reminder_toggle(message: types.Message, state: FSMContext):
                     curr["times"] = defaults.get(key, {}).get("times", [])
             await db.set_reminder_setting(user_id, key, new_enabled, curr.get("times", []))
             await reminder_settings_menu(message, state)
-            return
-
-    # Проверяем, это запрос на изменение времени
-    for label, key in REMINDER_TYPES.items():
-        if text == f"🕐 {label}":
-            await state.update_data(edit_reminder_key=key)
-            await message.answer(f"✏️ {REMINDER_HINTS[key]}")
             return
 
     if text == "⚙️ Сбросить на стандартные":
@@ -283,7 +296,6 @@ async def reminder_toggle(message: types.Message, state: FSMContext):
         await settings_menu(message, state)
         return
 
-    # Иначе — пользователь ввёл время
     await set_reminder_time(message, state)
 
 async def set_reminder_time(message: types.Message, state: FSMContext):
@@ -330,6 +342,8 @@ def register(dp: Dispatcher):
     dp.register_message_handler(profile_height_save, state=SettingsStates.waiting_for_profile_height)
     dp.register_message_handler(profile_weight_start, text="🔄 Вес", state="*")
     dp.register_message_handler(profile_weight_save, state=SettingsStates.waiting_for_profile_weight)
+    dp.register_message_handler(nickname_start, text="📝 Задать никнейм", state="*")
+    dp.register_message_handler(nickname_save, state=SettingsStates.waiting_for_nickname)
     dp.register_message_handler(toggle_ai, text="🤖 AI-совет (вкл/выкл)", state="*")
     dp.register_message_handler(toggle_weekly_reports, text="📊 Еженедельные отчёты (вкл/выкл)", state="*")
     dp.register_message_handler(quiet_hours_start, text="🕒 Тихий час", state="*")
