@@ -63,4 +63,4 @@ def register(dp: Dispatcher):
     dp.register_message_handler(achievements_main, text="🏆 Достижения", state="*")
     dp.register_message_handler(my_achievements, text="🏅 Мои достижения", state="*")
     dp.register_message_handler(leaderboard, text="📊 Таблица лидеров", state="*")
-    dp.register_message_handler(back_to_achievements, text="⬅️ Назад", state="*")
+    
