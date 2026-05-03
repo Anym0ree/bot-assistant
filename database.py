@@ -509,5 +509,71 @@ class Database:
                 local_dt.strftime("%H:%M")
             )
             return row['id'] if row else None
-
+    # ========== ДОСТИЖЕНИЯ И XP ==========
+    async def add_xp(self, user_id: int, xp: int):
+        """Начисляет XP и обновляет уровень"""
+        async with self.pool.acquire() as conn:
+            await conn.execute("UPDATE users SET xp = xp + $1 WHERE user_id = $2", xp, user_id)
+            row = await conn.fetchrow("SELECT xp FROM users WHERE user_id = $1", user_id)
+            if row:
+                new_level = row['xp'] // 100 + 1
+                await conn.execute("UPDATE users SET level = $1 WHERE user_id = $2", new_level, user_id)
+    
+    async def get_user_xp(self, user_id: int) -> dict:
+        """Возвращает XP и уровень пользователя"""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT xp, level FROM users WHERE user_id = $1", user_id)
+            if row:
+                return {"xp": row['xp'], "level": row['level']}
+            return {"xp": 0, "level": 1}
+    
+    async def get_leaderboard(self, limit: int = 10) -> list:
+        """Топ пользователей по XP (только с ником)"""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT nickname, level, xp FROM users
+                WHERE nickname IS NOT NULL AND xp > 0
+                ORDER BY xp DESC LIMIT $1
+            """, limit)
+            return [{"nickname": r['nickname'], "level": r['level'], "xp": r['xp']} for r in rows]
+    
+    async def award_achievement(self, user_id: int, code: str):
+        """Выдаёт достижение, если ещё не выдано. Возвращает (name, icon) или None."""
+        async with self.pool.acquire() as conn:
+            # проверяем, есть ли уже
+            exists = await conn.fetchval("SELECT 1 FROM user_achievements WHERE user_id = $1 AND achievement_code = $2", user_id, code)
+            if exists:
+                return None
+            # выдаём
+            await conn.execute("INSERT INTO user_achievements (user_id, achievement_code) VALUES ($1, $2)", user_id, code)
+            row = await conn.fetchrow("SELECT name, icon FROM achievements WHERE code = $1", code)
+            if row:
+                return (row['name'], row['icon'])
+            return None
+    
+    async def get_user_achievements(self, user_id: int) -> list:
+        """Список полученных достижений"""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT a.code, a.name, a.icon, ua.awarded_at
+                FROM user_achievements ua
+                JOIN achievements a ON a.code = ua.achievement_code
+                WHERE ua.user_id = $1 ORDER BY ua.awarded_at
+            """, user_id)
+            return [dict(r) for r in rows]
+    
+    async def get_all_achievements(self) -> list:
+        """Все возможные достижения"""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("SELECT code, name, description, icon FROM achievements ORDER BY code")
+            return [dict(r) for r in rows]
+    
+    async def set_nickname(self, user_id: int, nickname: str):
+        async with self.pool.acquire() as conn:
+            await conn.execute("UPDATE users SET nickname = $1 WHERE user_id = $2", nickname, user_id)
+    
+    async def get_nickname(self, user_id: int) -> str:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT nickname FROM users WHERE user_id = $1", user_id)
+            return row['nickname'] if row else None
 db = Database()
