@@ -5,6 +5,8 @@ from states import SleepStates
 from keyboards import get_main_menu
 from utils import send_temp_message
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from plugins.achievements import track_action
+
 
 def get_back_next_keyboard(back_text="↩️ Назад"):
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
@@ -143,6 +145,7 @@ async def sleep_confirm(message: types.Message, state: FSMContext):
         )
         await state.finish()
         await message.answer("✅ Сон сохранён!", reply_markup=get_main_menu())
+        await track_action(message.from_user.id, "sleep", bot=message.bot)
     elif message.text == "✏️ Исправить":
         await state.update_data(_confirming=False)
         await SleepStates.bed_time.set()
