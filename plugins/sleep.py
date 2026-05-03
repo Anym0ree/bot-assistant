@@ -143,9 +143,9 @@ async def sleep_confirm(message: types.Message, state: FSMContext):
             data.get("woke_night", False),
             data.get("note", "")
         )
+        await track_action(message.from_user.id, "sleep", bot=message.bot)
         await state.finish()
         await message.answer("✅ Сон сохранён!", reply_markup=get_main_menu())
-        await track_action(message.from_user.id, "sleep", bot=message.bot)
     elif message.text == "✏️ Исправить":
         await state.update_data(_confirming=False)
         await SleepStates.bed_time.set()
