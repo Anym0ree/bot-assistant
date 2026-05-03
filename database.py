@@ -19,7 +19,6 @@ class Database:
             command_timeout=60
         )
         await self._init_tables()
-        await self._migrate_reminder_settings()
         logging.info("✅ PostgreSQL подключён!")
 
     async def close(self):
@@ -37,15 +36,29 @@ class Database:
                     age INTEGER DEFAULT 0,
                     height INTEGER DEFAULT 0,
                     weight INTEGER DEFAULT 0,
-                    city TEXT,
-                    nickname TEXT,
-                    status_text TEXT DEFAULT '',
-                    current_track TEXT,
-                    xp INTEGER DEFAULT 0,
-                    level INTEGER DEFAULT 1
+                    city TEXT
                 )
             ''')
-            # sleep
+            # Добавляем недостающие колонки, если их нет
+            await conn.execute('''
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_name='users' AND column_name='xp') THEN
+                        ALTER TABLE users ADD COLUMN xp INTEGER DEFAULT 0;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_name='users' AND column_name='level') THEN
+                        ALTER TABLE users ADD COLUMN level INTEGER DEFAULT 1;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_name='users' AND column_name='nickname') THEN
+                        ALTER TABLE users ADD COLUMN nickname TEXT;
+                    END IF;
+                END $$;
+            ''')
+
+            # Остальные таблицы без изменений
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS sleep (
                     id SERIAL PRIMARY KEY,
@@ -59,7 +72,6 @@ class Database:
                     note TEXT
                 )
             ''')
-            # checkins
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS checkins (
                     id SERIAL PRIMARY KEY,
@@ -74,7 +86,6 @@ class Database:
                     note TEXT
                 )
             ''')
-            # day_summary
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS day_summary (
                     id SERIAL PRIMARY KEY,
@@ -88,7 +99,6 @@ class Database:
                     note TEXT
                 )
             ''')
-            # food
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS food (
                     id SERIAL PRIMARY KEY,
@@ -100,7 +110,6 @@ class Database:
                     food_text TEXT
                 )
             ''')
-            # drinks
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS drinks (
                     id SERIAL PRIMARY KEY,
@@ -112,7 +121,6 @@ class Database:
                     amount TEXT
                 )
             ''')
-            # notes (старая таблица для простых заметок)
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS notes (
                     id SERIAL PRIMARY KEY,
@@ -123,7 +131,6 @@ class Database:
                     timestamp TIMESTAMP
                 )
             ''')
-            # notes_v2 (новая таблица с разделами - не используем пока)
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS notes_v2 (
                     id SERIAL PRIMARY KEY,
@@ -135,7 +142,6 @@ class Database:
                     updated_at TIMESTAMP
                 )
             ''')
-            # note_sections
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS note_sections (
                     id SERIAL PRIMARY KEY,
@@ -146,7 +152,6 @@ class Database:
                     UNIQUE(user_id, name)
                 )
             ''')
-            # reminders
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS reminders (
                     id SERIAL PRIMARY KEY,
@@ -162,7 +167,6 @@ class Database:
                     remind_utc TIMESTAMP
                 )
             ''')
-            # user_locations
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS user_locations (
                     user_id BIGINT PRIMARY KEY,
@@ -172,7 +176,6 @@ class Database:
                     updated_at TIMESTAMP DEFAULT NOW()
                 )
             ''')
-            # ai_history
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS ai_history (
                     id SERIAL PRIMARY KEY,
@@ -183,8 +186,6 @@ class Database:
                 )
             ''')
             await conn.execute('CREATE INDEX IF NOT EXISTS idx_ai_history_user_id ON ai_history(user_id)')
-            await conn.execute('CREATE INDEX IF NOT EXISTS idx_ai_history_created_at ON ai_history(created_at)')
-            # user_reminder_settings
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS user_reminder_settings (
                     user_id BIGINT NOT NULL,
@@ -194,7 +195,6 @@ class Database:
                     PRIMARY KEY (user_id, setting_type)
                 )
             ''')
-            # user_settings
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS user_settings (
                     user_id BIGINT PRIMARY KEY,
@@ -207,7 +207,6 @@ class Database:
                     weather_notify INTEGER DEFAULT 0
                 )
             ''')
-            # tasks
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS tasks (
                     id SERIAL PRIMARY KEY,
@@ -226,7 +225,6 @@ class Database:
                     created_at TIMESTAMP DEFAULT NOW()
                 )
             ''')
-            # task_logs
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS task_logs (
                     id SERIAL PRIMARY KEY,
@@ -239,12 +237,42 @@ class Database:
                     completed_at TIMESTAMP
                 )
             ''')
+            # Таблицы для достижений
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS achievements (
+                    id SERIAL PRIMARY KEY,
+                    code TEXT UNIQUE NOT NULL,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    icon TEXT
+                )
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS user_achievements (
+                    user_id BIGINT NOT NULL,
+                    achievement_code TEXT NOT NULL,
+                    awarded_at TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (user_id, achievement_code)
+                )
+            ''')
+            # Вставляем базовые достижения, если их нет
+            await conn.execute('''
+                INSERT INTO achievements (code, name, description, icon) VALUES
+                ('first_sleep', 'Первый сон', 'Записать 1 сон', '🌙'),
+                ('first_checkin', 'Первый чекин', 'Сделать 1 чекин', '⚡'),
+                ('first_summary', 'Первый итог', 'Подвести итог дня', '📝'),
+                ('sleep_7_streak', '7 дней сна', 'Записать сон 7 дней подряд', '😴'),
+                ('sleep_30_streak', 'Месяц сна', 'Записать сон 30 дней подряд', '🏆'),
+                ('checkin_7_streak', 'Неделя чекинов', 'Делать чекин 7 дней подряд', '📈'),
+                ('checkin_30_streak', 'Месяц чекинов', 'Делать чекин 30 дней подряд', '🔥'),
+                ('perfect_day', 'Идеальный день', 'Сон + чекин + итог за один день', '🌟'),
+                ('notes_10', '10 заметок', 'Создать 10 заметок', '📚'),
+                ('food_50', 'Гурман', 'Записать 50 приёмов пищи', '🍽')
+                ON CONFLICT (code) DO NOTHING
+            ''')
             logging.info("✅ Все таблицы созданы")
 
-    async def _migrate_reminder_settings(self):
-        pass
-
-    # ========== МЕТОДЫ ДЛЯ ЗАДАЧ И РУТИНЫ ==========
+    # ---------- методы для задач ----------
     async def add_task(self, user_id, title, task_type, **kwargs):
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("""
@@ -265,8 +293,7 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.fetch("""
                 SELECT id, title, start_date, start_time, remind_before_minutes, next_due
-                FROM tasks
-                WHERE user_id = $1 AND task_type = 'once' AND is_active = TRUE AND next_due > NOW()
+                FROM tasks WHERE user_id = $1 AND task_type = 'once' AND is_active = TRUE AND next_due > NOW()
                 ORDER BY next_due LIMIT $2
             """, user_id, limit)
 
@@ -286,8 +313,7 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.fetch("""
                 SELECT id, user_id, title, start_date, start_time
-                FROM tasks
-                WHERE task_type = 'once' AND is_active = TRUE AND next_due <= $1
+                FROM tasks WHERE task_type = 'once' AND is_active = TRUE AND next_due <= $1
             """, now_utc)
 
     async def get_recurring_tasks_by_user(self, user_id):
@@ -301,13 +327,12 @@ class Database:
         async with self.pool.acquire() as conn:
             await conn.execute("UPDATE tasks SET is_active = FALSE WHERE id = $1 AND user_id = $2", task_id, user_id)
 
-    # ========== МЕТОДЫ ДЛЯ ЗАМЕТОК С РАЗДЕЛАМИ ==========
+    # ---------- методы для заметок с разделами ----------
     async def add_section(self, user_id, name, icon='📝'):
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("""
                 INSERT INTO note_sections (user_id, name, icon) VALUES ($1, $2, $3)
-                ON CONFLICT (user_id, name) DO NOTHING
-                RETURNING id
+                ON CONFLICT (user_id, name) DO NOTHING RETURNING id
             """, user_id, name, icon)
             return row['id'] if row else None
 
@@ -336,7 +361,7 @@ class Database:
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM notes_v2 WHERE id = $1 AND user_id = $2", note_id, user_id)
 
-    # ========== МЕТОДЫ ДЛЯ НАПОМИНАНИЙ ==========
+    # ---------- напоминания ----------
     async def get_reminder_setting(self, user_id, setting_type):
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT enabled, times FROM user_reminder_settings WHERE user_id = $1 AND setting_type = $2", user_id, setting_type)
@@ -358,7 +383,7 @@ class Database:
                 ON CONFLICT (user_id, setting_type) DO UPDATE SET enabled = $3, times = $4
             """, user_id, setting_type, enabled, times)
 
-    # ========== БАЗОВЫЕ МЕТОДЫ ==========
+    # ---------- базовые методы ----------
     async def get_user_profile(self, user_id):
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT age, height, weight FROM users WHERE user_id = $1", user_id)
@@ -414,8 +439,7 @@ class Database:
 
     async def get_target_date_for_summary(self, user_id):
         local_hour = await self.get_user_local_hour(user_id)
-        if local_hour >= 18:
-            return await self.get_user_local_date(user_id)
+        if local_hour >= 18: return await self.get_user_local_date(user_id)
         elif local_hour < 6:
             offset = await self.get_user_timezone(user_id)
             yesterday = datetime.utcnow() - timedelta(days=1)
@@ -498,37 +522,22 @@ class Database:
         for r in drink_rows: combined.append({"type": "🥤 Напитки", "time": r['time'], "text": f"{r['drink_type']}: {r['amount']}"})
         return sorted(combined, key=lambda x: x['time'])
 
-    async def add_note_simple(self, user_id, text):
-        """Добавляет заметку в старую таблицу notes"""
-        local_dt = await self.get_user_local_datetime(user_id)
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "INSERT INTO notes (user_id, text, date, time, timestamp) VALUES ($1, $2, $3, $4, NOW()) RETURNING id",
-                user_id, text,
-                local_dt.strftime("%Y-%m-%d"),
-                local_dt.strftime("%H:%M")
-            )
-            return row['id'] if row else None
-    # ========== ДОСТИЖЕНИЯ И XP ==========
+    # ---------- достижения и XP ----------
     async def add_xp(self, user_id: int, xp: int):
-        """Начисляет XP и обновляет уровень"""
         async with self.pool.acquire() as conn:
             await conn.execute("UPDATE users SET xp = xp + $1 WHERE user_id = $2", xp, user_id)
             row = await conn.fetchrow("SELECT xp FROM users WHERE user_id = $1", user_id)
             if row:
                 new_level = row['xp'] // 100 + 1
                 await conn.execute("UPDATE users SET level = $1 WHERE user_id = $2", new_level, user_id)
-    
+
     async def get_user_xp(self, user_id: int) -> dict:
-        """Возвращает XP и уровень пользователя"""
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT xp, level FROM users WHERE user_id = $1", user_id)
-            if row:
-                return {"xp": row['xp'], "level": row['level']}
+            if row: return {"xp": row['xp'], "level": row['level']}
             return {"xp": 0, "level": 1}
-    
+
     async def get_leaderboard(self, limit: int = 10) -> list:
-        """Топ пользователей по XP (только с ником)"""
         async with self.pool.acquire() as conn:
             rows = await conn.fetch("""
                 SELECT nickname, level, xp FROM users
@@ -536,23 +545,17 @@ class Database:
                 ORDER BY xp DESC LIMIT $1
             """, limit)
             return [{"nickname": r['nickname'], "level": r['level'], "xp": r['xp']} for r in rows]
-    
+
     async def award_achievement(self, user_id: int, code: str):
-        """Выдаёт достижение, если ещё не выдано. Возвращает (name, icon) или None."""
         async with self.pool.acquire() as conn:
-            # проверяем, есть ли уже
             exists = await conn.fetchval("SELECT 1 FROM user_achievements WHERE user_id = $1 AND achievement_code = $2", user_id, code)
-            if exists:
-                return None
-            # выдаём
+            if exists: return None
             await conn.execute("INSERT INTO user_achievements (user_id, achievement_code) VALUES ($1, $2)", user_id, code)
             row = await conn.fetchrow("SELECT name, icon FROM achievements WHERE code = $1", code)
-            if row:
-                return (row['name'], row['icon'])
+            if row: return (row['name'], row['icon'])
             return None
-    
+
     async def get_user_achievements(self, user_id: int) -> list:
-        """Список полученных достижений"""
         async with self.pool.acquire() as conn:
             rows = await conn.fetch("""
                 SELECT a.code, a.name, a.icon, ua.awarded_at
@@ -561,19 +564,34 @@ class Database:
                 WHERE ua.user_id = $1 ORDER BY ua.awarded_at
             """, user_id)
             return [dict(r) for r in rows]
-    
+
     async def get_all_achievements(self) -> list:
-        """Все возможные достижения"""
         async with self.pool.acquire() as conn:
             rows = await conn.fetch("SELECT code, name, description, icon FROM achievements ORDER BY code")
             return [dict(r) for r in rows]
-    
+
     async def set_nickname(self, user_id: int, nickname: str):
         async with self.pool.acquire() as conn:
             await conn.execute("UPDATE users SET nickname = $1 WHERE user_id = $2", nickname, user_id)
-    
+
     async def get_nickname(self, user_id: int) -> str:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT nickname FROM users WHERE user_id = $1", user_id)
             return row['nickname'] if row else None
+
+    async def count_today_notes(self, user_id: int) -> int:
+        today = await self.get_user_local_date(user_id)
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval("SELECT COUNT(*) FROM notes WHERE user_id = $1 AND date = $2", user_id, today) or 0
+
+    async def count_today_food(self, user_id: int) -> int:
+        today = await self.get_user_local_date(user_id)
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval("SELECT COUNT(*) FROM food WHERE user_id = $1 AND date = $2", user_id, today) or 0
+
+    async def count_today_drinks(self, user_id: int) -> int:
+        today = await self.get_user_local_date(user_id)
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval("SELECT COUNT(*) FROM drinks WHERE user_id = $1 AND date = $2", user_id, today) or 0
+
 db = Database()
