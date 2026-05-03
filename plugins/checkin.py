@@ -5,6 +5,7 @@ from states import CheckinStates
 from keyboards import get_main_menu
 from utils import send_temp_message, is_valid_score_text
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from plugins.achievements import track_action
 
 async def checkin_start(message: types.Message, state: FSMContext):
     await state.update_data(emotions=[], _step=1)
@@ -123,6 +124,7 @@ async def checkin_confirm(message: types.Message, state: FSMContext):
 
     if message.text == "✅ Сохранить":
         await db.add_checkin(message.from_user.id, "manual", data['energy'], data['stress'], data.get('emotions', []), data.get('note', ''))
+        await track_action(message.from_user.id, "checkin", bot=message.bot)
         await state.finish()
         await message.answer("✅ Чекин сохранён!", reply_markup=get_main_menu())
     elif message.text == "✏️ Исправить":
@@ -141,3 +143,4 @@ def register(dp: Dispatcher):
     dp.register_message_handler(checkin_emotions, state=CheckinStates.emotions)
     dp.register_message_handler(checkin_note, state=CheckinStates.note)
     dp.register_message_handler(checkin_confirm, lambda m: m.text in ("✅ Сохранить", "✏️ Исправить"), state="*")
+    
