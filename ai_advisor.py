@@ -1,313 +1,158 @@
 import logging
+import asyncio
 import aiohttp
-from typing import Dict, Optional, List
 from datetime import datetime, timedelta
-import json
+from typing import Optional
 from database import db
+from config import OPENAI_API_KEY
 
 logger = logging.getLogger(__name__)
 
+# Глобальный экземпляр (инициализируется в bot.py)
 ai_advisor = None
 
 class AIAdvisor:
-    def __init__(self, api_key: str, model: str = "openrouter/free", base_url: str = "https://openrouter.ai/api/v1"):
+    def __init__(self, api_key: str, model: str = "openrouter/auto"):
         self.api_key = api_key
         self.model = model
-        self.base_url = base_url.rstrip('/') + '/chat/completions'
-        self.user_context = {}
+        self.base_url = "https://openrouter.ai/api/v1/chat/completions"
         if api_key:
-            logger.info(f"AIAdvisor инициализирован с OpenRouter. Модель: {self.model}")
-        else:
-            logger.warning("AIAdvisor: API ключ не задан!")
+            logger.info(f"AIAdvisor инициализирован. Модель: {self.model}")
 
-    def set_user_data(self, user_id: int, data: Dict):
-        self.user_context[user_id] = data
+    async def _ask_ai(self, messages: list, max_tokens: int = 400, temperature: float = 0.7) -> Optional[str]:
+        """Отправляет запрос в OpenRouter с таймаутом 7 секунд"""
+        if not self.api_key:
+            return None
 
-    def get_user_data(self, user_id: int) -> Optional[Dict]:
-        return self.user_context.get(user_id)
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
 
-    def clear_user_data(self, user_id: int):
-        self.user_context.pop(user_id, None)
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(self.base_url, headers=headers, json=payload, timeout=7) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        content = result["choices"][0]["message"]["content"]
+                        if content:
+                            return content.strip()
+                    else:
+                        logger.error(f"AI ошибка {resp.status}: {await resp.text()}")
+        except asyncio.TimeoutError:
+            logger.warning("AI запрос превысил таймаут 7 секунд")
+        except Exception as e:
+            logger.error(f"AI запрос исключение: {e}")
+        return None
 
-    def _get_aggregated_stats(self, data: Dict, user_id: int) -> Dict:
-        from collections import Counter
-        stats = {}
-        
-        sleep_data = data.get("sleep", [])
-        if sleep_data:
-            sleep_hours = []
-            qualities = []
-            for s in sleep_data:
-                try:
-                    bed = datetime.strptime(s['bed_time'], "%H:%M")
-                    wake = datetime.strptime(s['wake_time'], "%H:%M")
-                    hours = (wake - bed).seconds / 3600
-                    if hours < 0:
-                        hours += 24
-                    sleep_hours.append(hours)
-                    qualities.append(s.get('quality', 0))
-                except:
-                    pass
-            if sleep_hours:
-                stats['avg_sleep_hours'] = sum(sleep_hours) / len(sleep_hours)
-                stats['avg_sleep_quality'] = sum(qualities) / len(qualities) if qualities else 0
-                stats['sleep_count'] = len(sleep_hours)
-                stats['max_sleep'] = max(sleep_hours)
-                stats['min_sleep'] = min(sleep_hours)
-            else:
-                stats['avg_sleep_hours'] = 0
-                stats['sleep_count'] = 0
-        else:
-            stats['avg_sleep_hours'] = 0
-            stats['sleep_count'] = 0
+    async def collect_user_context(self, user_id: int) -> dict:
+        """Собирает всю доступную информацию о пользователе"""
+        ctx = {}
+        try:
+            profile = await db.get_user_profile(user_id)
+            ctx['profile'] = profile
 
-        checkins = data.get("checkins", [])
-        if checkins:
-            energies = [c['energy'] for c in checkins if 'energy' in c]
-            stresses = [c['stress'] for c in checkins if 'stress' in c]
-            stats['avg_energy'] = sum(energies) / len(energies) if energies else 0
-            stats['avg_stress'] = sum(stresses) / len(stresses) if stresses else 0
-            stats['checkins_count'] = len(checkins)
-            all_emotions = []
-            for c in checkins:
-                emo = c.get('emotions', [])
-                if isinstance(emo, str):
-                    try:
-                        emo = json.loads(emo)
-                    except:
-                        emo = []
-                all_emotions.extend(emo)
-            if all_emotions:
-                stats['top_emotions'] = [e for e, _ in Counter(all_emotions).most_common(3)]
-            else:
-                stats['top_emotions'] = []
-        else:
-            stats['avg_energy'] = 0
-            stats['avg_stress'] = 0
-            stats['checkins_count'] = 0
-            stats['top_emotions'] = []
+            tz = await db.get_user_timezone(user_id) or 3
+            now_local = datetime.utcnow() + timedelta(hours=tz)
+            today_str = now_local.strftime("%Y-%m-%d")
 
-        summaries = data.get("day_summary", [])
-        if summaries:
-            scores = [s['score'] for s in summaries if 'score' in s]
-            stats['avg_day_score'] = sum(scores) / len(scores) if scores else 0
-            stats['summaries_count'] = len(summaries)
-            stats['best_day_score'] = max(scores) if scores else 0
-            stats['worst_day_score'] = min(scores) if scores else 0
-        else:
-            stats['avg_day_score'] = 0
-            stats['summaries_count'] = 0
-            stats['best_day_score'] = 0
-            stats['worst_day_score'] = 0
+            # Сон
+            async with db.pool.acquire() as conn:
+                sleep = await conn.fetchrow("SELECT bed_time, wake_time, quality FROM sleep WHERE user_id = $1 AND date = $2", user_id, today_str)
+                ctx['sleep'] = dict(sleep) if sleep else None
 
-        stats['food_count'] = len(data.get("food", []))
-        stats['drinks_count'] = len(data.get("drinks", []))
-        water_count = 0
-        for d in data.get("drinks", []):
-            if "вода" in d.get('amount', '').lower() or "вода" in d.get('drink_type', '').lower():
-                water_count += 1
-        stats['water_entries'] = water_count
-        stats['notes_count'] = len(data.get("notes", []))
+                # Чек-ин
+                checkin = await conn.fetchrow("SELECT energy, stress, emotions FROM checkins WHERE user_id = $1 AND date = $2 ORDER BY time DESC LIMIT 1", user_id, today_str)
+                ctx['checkin'] = dict(checkin) if checkin else None
 
-        return stats
+                # Итог дня
+                summary = await conn.fetchrow("SELECT score, best, worst, gratitude FROM day_summary WHERE user_id = $1 AND date = $2", user_id, today_str)
+                ctx['summary'] = dict(summary) if summary else None
+
+                # Последние 3 записи сна и чекинов для тренда
+                sleep_rows = await conn.fetch("SELECT bed_time, wake_time, quality FROM sleep WHERE user_id = $1 ORDER BY date DESC LIMIT 3", user_id)
+                ctx['sleep_rows'] = [dict(r) for r in sleep_rows]
+
+                checkin_rows = await conn.fetch("SELECT energy, stress, emotions FROM checkins WHERE user_id = $1 ORDER BY date DESC LIMIT 3", user_id)
+                ctx['checkin_rows'] = [dict(r) for r in checkin_rows]
+
+                # Дела
+                tasks = await conn.fetch("""
+                    SELECT title FROM tasks WHERE user_id = $1 AND task_type = 'once' AND start_date = $2
+                """, user_id, today_str)
+                ctx['tasks'] = [r['title'] for r in tasks]
+
+                # Рутины
+                routines = await db.get_recurring_tasks_by_user(user_id)
+                ctx['routines'] = [dict(r) for r in routines]
+
+                # Погода (город)
+                loc = await conn.fetchrow("SELECT city FROM user_locations WHERE user_id = $1", user_id)
+                ctx['city'] = loc['city'] if loc else None
+
+            return ctx
+        except Exception as e:
+            logger.error(f"Ошибка сбора контекста: {e}")
+            return ctx
+
+    async def get_smart_advice(self, user_id: int, context_type: str = "general", extra_context: str = "") -> Optional[str]:
+        """
+        Единый метод для получения AI‑совета в зависимости от контекста.
+        Возвращает строку с ответом или None, если AI недоступен.
+        """
+        if not self.api_key:
+            return None
+
+        ctx = await self.collect_user_context(user_id)
+
+        # Формируем промпт в зависимости от ситуации
+        if context_type == "morning":
+            prompt = self._build_morning_prompt(ctx, extra_context)
+        elif context_type == "weather":
+            prompt = self._build_weather_prompt(ctx, extra_context)
+        elif context_type == "summary":
+            prompt = self._build_summary_prompt(ctx, extra_context)
+        elif context_type == "question":
+            prompt = self._build_question_prompt(ctx, extra_context)
+        else:  # general
+            prompt = extra_context
+
+        messages = [
+            {"role": "system", "content": "Ты — заботливый помощник для ведения дневника и отслеживания самочувствия. Отвечай кратко, дружелюбно, на русском языке."},
+            {"role": "user", "content": prompt}
+        ]
+
+        return await self._ask_ai(messages)
+
+    def _build_morning_prompt(self, ctx: dict, extra: str) -> str:
+        weather = extra or "Погода неизвестна"
+        tasks = ', '.join(ctx.get('tasks', [])) or "ничего не запланировано"
+        return f"Пользователь просыпается. На улице {weather}. На сегодня запланировано: {tasks}. Напиши короткое утреннее пожелание и один конкретный совет на день (15-25 слов)."
+
+    def _build_weather_prompt(self, ctx: dict, extra: str) -> str:
+        return f"Погода: {extra}. Дай ОДИН короткий совет по одежде (зонт, шапка, куртка) для этой погоды. Только совет, без лишних слов."
+
+    def _build_summary_prompt(self, ctx: dict, extra: str) -> str:
+        summary = ctx.get('summary', {})
+        sleep = ctx.get('sleep', {})
+        checkin = ctx.get('checkin', {})
+        return f"Итог дня: оценка {summary.get('score', 'нет')}/10, лучшее: {summary.get('best', 'нет')}. Сон: лёг {sleep.get('bed_time', '?')}, встал {sleep.get('wake_time', '?')}. Энергия {checkin.get('energy', '?')}/10, стресс {checkin.get('stress', '?')}/10. Дай короткий комментарий и поддержку (1-2 предложения)."
+
+    def _build_question_prompt(self, ctx: dict, extra: str) -> str:
+        return "Придумай один глубокий, но простой вопрос для вечернего дневника, который поможет пользователю лучше понять своё самочувствие. Только вопрос, без пояснений."
+
+    # -- Старые методы для совместимости --
+    async def get_advice(self, user_id: int, user_question: str, history=None) -> str:
+        return await self.get_smart_advice(user_id, "general", user_question) or "AI сейчас недоступен."
 
     async def get_first_advice(self, user_id: int) -> str:
-        user_data = self.get_user_data(user_id)
-        if not user_data:
-            return "⚠️ Данные для анализа не найдены. Нажмите «🤖 AI-совет» снова."
-
-        stats = self._get_aggregated_stats(user_data, user_id)
-        profile = await db.get_user_profile(user_id)
-        
-        stats_text = f"""
-ВОТ ДАННЫЕ ПОЛЬЗОВАТЕЛЯ (используй только их, не выдумывай):
-
-Возраст: {profile['age'] if profile['age'] else 'не указан'} лет
-Рост: {profile['height'] if profile['height'] else 'не указан'} см
-Вес: {profile['weight'] if profile['weight'] else 'не указан'} кг
-
-СОН:
-- Всего записей: {stats['sleep_count']}
-- Средняя длительность: {stats['avg_sleep_hours']:.1f} часов
-- Среднее качество: {stats.get('avg_sleep_quality', 0):.1f}/10
-- Самый долгий сон: {stats.get('max_sleep', 0):.1f} ч
-- Самый короткий сон: {stats.get('min_sleep', 0):.1f} ч
-
-ЧЕК-ИНЫ:
-- Всего записей: {stats['checkins_count']}
-- Средняя энергия: {stats['avg_energy']:.1f}/10
-- Средний стресс: {stats['avg_stress']:.1f}/10
-- Частые эмоции: {', '.join(stats['top_emotions']) if stats['top_emotions'] else 'не указаны'}
-
-ИТОГИ ДНЯ:
-- Всего записей: {stats['summaries_count']}
-- Средняя оценка: {stats['avg_day_score']:.1f}/10
-- Лучшая оценка: {stats['best_day_score']}/10
-- Худшая оценка: {stats['worst_day_score']}/10
-
-ПИТАНИЕ:
-- Записей о еде: {stats['food_count']}
-- Записей о напитках: {stats['drinks_count']}
-- Из них с водой: {stats['water_entries']}
-"""
-
-        system_prompt = f"""Ты — дружелюбный, эмпатичный AI-коуч. Напиши пользователю первое сообщение по строгой структуре.
-
-СТРУКТУРА:
-1. Приветствие.
-2. Анализ состояния (сон, энергия, стресс, эмоции, оценка дня).
-3. Советы по улучшению (если есть проблемы). Если проблем нет — похвали.
-4. Завершение: "Задай любой вопрос о своём самочувствии или привычках. Я помню наши разговоры."
-
-ПРАВИЛА:
-- Пиши только на русском языке, грамотно.
-- Не используй звёздочки, подчёркивания, решётки.
-- Не выдумывай то, чего нет в данных.
-- Будь человечным, но не перегружай текст.
-
-Вот данные пользователя:
-{stats_text}"""
-
-        messages = [{"role": "system", "content": system_prompt}]
-        messages.append({"role": "user", "content": "Напиши моё первое сообщение по структуре выше."})
-
-        async with aiohttp.ClientSession() as session:
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "model": self.model,
-                "messages": messages,
-                "temperature": 0.5,
-                "max_tokens": 800,
-            }
-            try:
-                async with session.post(self.base_url, headers=headers, json=payload) as resp:
-                    if resp.status == 200:
-                        result = await resp.json()
-                        content = result["choices"][0]["message"]["content"]
-                        if content is None:
-                            return "⚠️ AI вернул пустой ответ. Попробуйте позже."
-                        content = content.replace('*', '').replace('_', '').replace('`', '').replace('~', '').replace('#', '').replace('>', '')
-                        return content
-                    else:
-                        return f"⚠️ Ошибка AI-сервиса (код {resp.status}). Попробуйте позже."
-            except Exception as e:
-                logger.error(f"AI request failed: {e}")
-                return f"⚠️ Не удалось связаться с AI-сервисом: {str(e)[:100]}"
+        return await self.get_smart_advice(user_id, "morning") or "Доброе утро! Хорошего дня!"
 
     async def analyze_day(self, user_id: int, date_str: str) -> str:
-        user_data = self.get_user_data(user_id)
-        if not user_data:
-            return "⚠️ Данные не найдены."
-
-        day_data = {}
-        for s in user_data.get("sleep", []):
-            if s.get('date') == date_str:
-                day_data['sleep'] = s
-                break
-        for c in user_data.get("checkins", []):
-            if c.get('date') == date_str:
-                day_data['checkin'] = c
-                break
-        for d in user_data.get("day_summary", []):
-            if d.get('date') == date_str:
-                day_data['summary'] = d
-                break
-        
-        if not day_data:
-            return f"📅 За {date_str} нет данных. Заполни их, чтобы я мог проанализировать."
-
-        day_text = f"Данные за {date_str}:\n"
-        if 'sleep' in day_data:
-            s = day_data['sleep']
-            day_text += f"- Сон: лёг в {s['bed_time']}, встал в {s['wake_time']}, качество {s['quality']}/10\n"
-        if 'checkin' in day_data:
-            c = day_data['checkin']
-            day_text += f"- Чек-ин: энергия {c['energy']}/10, стресс {c['stress']}/10\n"
-        if 'summary' in day_data:
-            d = day_data['summary']
-            day_text += f"- Итог дня: оценка {d['score']}/10, лучшее: {d['best']}, сложное: {d['worst']}\n"
-
-        system_prompt = f"""Ты — AI-коуч. Проанализируй один день пользователя.
-
-Данные за день:
-{day_text}
-
-Напиши короткий анализ (3-5 предложений):
-- Хороший ли был день? Почему?
-- Что можно было улучшить?
-- Один конкретный совет.
-
-Пиши на русском, без звёздочек и лишних символов."""
-
-        messages = [{"role": "system", "content": system_prompt}]
-        messages.append({"role": "user", "content": f"Проанализируй мой день за {date_str}."})
-
-        async with aiohttp.ClientSession() as session:
-            headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-            payload = {"model": self.model, "messages": messages, "temperature": 0.5, "max_tokens": 400}
-            try:
-                async with session.post(self.base_url, headers=headers, json=payload) as resp:
-                    if resp.status == 200:
-                        result = await resp.json()
-                        content = result["choices"][0]["message"]["content"]
-                        if content is None:
-                            return "⚠️ AI вернул пустой ответ."
-                        content = content.replace('*', '').replace('_', '').replace('`', '')
-                        return f"📅 *Анализ дня {date_str}*\n\n{content}"
-                    else:
-                        return "⚠️ Ошибка анализа. Попробуй позже."
-            except Exception as e:
-                logger.error(f"Day analysis failed: {e}")
-                return "⚠️ Ошибка связи с AI."
-
-    async def get_advice(self, user_id: int, user_question: str, history: List[Dict] = None) -> str:
-        if not self.api_key:
-            return "❌ AI-модуль не настроен."
-
-        user_data = self.get_user_data(user_id)
-        if not user_data:
-            return "⚠️ Данные не найдены."
-
-        stats = self._get_aggregated_stats(user_data, user_id)
-        profile = await db.get_user_profile(user_id)
-        
-        stats_summary = f"Сон: {stats['avg_sleep_hours']:.1f} ч, энергия: {stats['avg_energy']:.1f}/10, стресс: {stats['avg_stress']:.1f}/10, оценка дня: {stats['avg_day_score']:.1f}/10."
-
-        system_prompt = f"""Ты — дружелюбный AI-коуч. Отвечай на вопрос пользователя, используя его данные.
-
-Данные: {stats_summary}
-Возраст: {profile['age']}, рост: {profile['height']}, вес: {profile['weight']}
-
-Правила:
-- Пиши на русском, грамотно
-- Без звёздочек и лишних символов
-- Давай конкретные советы
-- Будь человечным"""
-
-        messages = [{"role": "system", "content": system_prompt}]
-        if history:
-            messages.extend(history[-10:])
-        messages.append({"role": "user", "content": user_question})
-
-        async with aiohttp.ClientSession() as session:
-            headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-            payload = {"model": self.model, "messages": messages, "temperature": 0.7, "max_tokens": 800}
-            try:
-                async with session.post(self.base_url, headers=headers, json=payload) as resp:
-                    if resp.status == 200:
-                        result = await resp.json()
-                        content = result["choices"][0]["message"]["content"]
-                        if content is None:
-                            return "⚠️ AI вернул пустой ответ."
-                        content = content.replace('*', '').replace('_', '').replace('`', '')
-                        return content
-                    else:
-                        return "⚠️ Ошибка AI. Попробуй позже."
-            except Exception as e:
-                logger.error(f"AI advice error: {e}")
-                return "⚠️ Ошибка связи с AI."
-
-ai_advisor = None
+        return await self.get_smart_advice(user_id, "summary", f"Дата: {date_str}") or "Не удалось проанализировать день."
