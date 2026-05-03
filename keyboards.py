@@ -12,6 +12,7 @@ def get_main_menu():
         [KeyboardButton(text="☕️ Вопрос дня")],
         [KeyboardButton(text="🎤 Конвертер")],
         [KeyboardButton(text="🤖 AI-совет")],
+        [KeyboardButton(text="🏆 Достижения")],
         [KeyboardButton(text="📤 Экспорт")],
         [KeyboardButton(text="⚙️ Настройки")]
     ]
