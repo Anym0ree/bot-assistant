@@ -5,6 +5,7 @@ from states import DaySummaryStates
 from keyboards import get_main_menu
 from utils import send_temp_message, is_valid_score_text
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from plugins.achievements import track_action
 
 async def day_summary_start(message: types.Message, state: FSMContext):
     target_date = await db.get_target_date_for_summary(message.from_user.id)
@@ -111,6 +112,7 @@ async def summary_confirm(message: types.Message, state: FSMContext):
 
     if message.text == "✅ Сохранить":
         await db.add_day_summary(message.from_user.id, data['score'], data.get('best', ''), data.get('worst', ''), data.get('gratitude', ''), data.get('note', ''))
+        await track_action(message.from_user.id, "summary", bot=message.bot)
         await state.finish()
         await message.answer("✅ Итог дня сохранён!", reply_markup=get_main_menu())
     elif message.text == "✏️ Исправить":
@@ -130,3 +132,4 @@ def register(dp: Dispatcher):
     dp.register_message_handler(summary_gratitude, state=DaySummaryStates.gratitude)
     dp.register_message_handler(summary_note, state=DaySummaryStates.note)
     dp.register_message_handler(summary_confirm, lambda m: m.text in ("✅ Сохранить", "✏️ Исправить"), state="*")
+    
