@@ -116,3 +116,15 @@ def get_export_menu():
         [KeyboardButton(text="⬅️ Назад")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+def get_timezone_buttons():
+    buttons = [
+        [KeyboardButton(text="Москва (UTC+3)"), KeyboardButton(text="Санкт-Петербург (UTC+3)")],
+        [KeyboardButton(text="Екатеринбург (UTC+5)"), KeyboardButton(text="Новосибирск (UTC+7)")],
+        [KeyboardButton(text="Владивосток (UTC+10)"), KeyboardButton(text="Калининград (UTC+2)")],
+        [KeyboardButton(text="Другое")],
+        [KeyboardButton(text="⬅️ Назад")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+def get_back_button():
+    return ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton("⬅️ Назад"))
