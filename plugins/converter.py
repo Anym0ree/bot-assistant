@@ -1,221 +1,259 @@
 import asyncio
-import os
-import shutil
-import tempfile
 import logging
+import os
+import tempfile
+import speech_recognition as sr
+from pydub import AudioSegment
+import yt_dlp
 from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
-from states import ConverterStates
-from keyboards import get_converter_formats_keyboard, get_back_button, get_main_menu
-from utils import edit_or_send, delete_dialog_message, send_temp_message, safe_finish, safe_remove_file
+from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
+from keyboards import get_converter_menu, get_main_menu
+from utils import safe_remove_file
+
+logger = logging.getLogger(__name__)
+
+class ConverterStates(StatesGroup):
+    waiting_for_voice = State()
+    waiting_for_video_note = State()
+    waiting_for_url = State()
+    waiting_for_format = State()
+
+# ========== Главное меню конвертера ==========
 async def converter_menu(message: types.Message, state: FSMContext):
-    await ConverterStates.file.set()
-    m = await message.answer(
-        "🔄 Отправь мне файл (видео, аудио, изображение), который хочешь конвертировать.\n\n"
-        "Поддерживаемые форматы на вход: MP4, AVI, MKV, MOV, MP3, WAV, OGG, JPG, PNG, GIF и др.\n"
-        "На выход можно получить: MP4, GIF, MP3, WEBM.",
-        reply_markup=get_back_button()
-    )
-    await state.update_data(msg_id=m.message_id, chat_id=m.chat.id)
-
-async def converter_file_text(message: types.Message, state: FSMContext):
-    if message.text == "⬅️ Назад":
-        await safe_finish(state, message)
-        return
-    await send_temp_message(message.chat.id, "❌ Отправь файл или нажми «Назад».", 3)
-
-async def converter_file(message: types.Message, state: FSMContext):
-    if not (message.document or message.video or message.audio):
-        await send_temp_message(message.chat.id, "❌ Неподдерживаемый тип файла. Пожалуйста, отправь документ, видео или аудио.", 3)
-        return
-
-    if message.document:
-        file_id = message.document.file_id
-        file_name = message.document.file_name or f"{message.document.file_unique_id}.bin"
-    elif message.video:
-        file_id = message.video.file_id
-        file_name = f"{message.video.file_unique_id}.mp4"
-    elif message.audio:
-        file_id = message.audio.file_id
-        file_name = f"{message.audio.file_unique_id}.mp3"
-    else:
-        await send_temp_message(message.chat.id, "❌ Неподдерживаемый тип файла.", 3)
-        return
-
-    try:
-        file = await message.bot.get_file(file_id)
-        downloaded_file = await message.bot.download_file(file.file_path)
-        input_ext = os.path.splitext(file_name)[1] or ".bin"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=input_ext, dir="/tmp") as tmp_file:
-            tmp_file.write(downloaded_file.getvalue())
-            temp_input = tmp_file.name
-
-        await state.update_data(input_path=temp_input)
-        await delete_dialog_message(state)
-
-        m = await message.answer(
-            "🎬 Выбери целевой формат:\n"
-            "• MP4 – видео\n"
-            "• GIF – анимация\n"
-            "• MP3 – аудио\n"
-            "• WEBM – видео (обычно меньший размер)",
-            reply_markup=get_converter_formats_keyboard()
-        )
-        await state.update_data(msg_id=m.message_id, chat_id=m.chat.id)
-        await ConverterStates.format.set()
-
-    except Exception as e:
-        logging.error(f"Ошибка при получении файла: {e}")
-        await send_temp_message(message.chat.id, "❌ Не удалось загрузить файл. Попробуй ещё раз.", 3)
-        await safe_finish(state, message)
-
-async def converter_format(message: types.Message, state: FSMContext):
-    if message.text == "⬅️ Назад":
-        await safe_finish(state, message)
-        return
-
-    fmt = message.text.upper()
-    allowed_formats = ["MP4", "GIF", "MP3", "WEBM"]
-    if fmt not in allowed_formats:
-        await send_temp_message(message.chat.id, f"❌ Неверный формат. Выбери из кнопок: {', '.join(allowed_formats)}", 3)
-        return
-
-    data = await state.get_data()
-    input_path = data.get('input_path')
-    if not input_path or not os.path.exists(input_path):
-        await send_temp_message(message.chat.id, "❌ Файл не найден. Попробуй ещё раз.", 3)
-        await safe_finish(state, message)
-        return
-
-    await delete_dialog_message(state)
     await state.finish()
+    await message.answer("🎤 *Конвертер*\n\nВыбери действие:", reply_markup=get_converter_menu(), parse_mode="Markdown")
 
-    # Проверяем наличие ffmpeg
-    ffmpeg_path = shutil.which('ffmpeg')
-    if not ffmpeg_path:
-        # Пробуем найти в текущей папке
-        ffmpeg_path = os.path.join(os.getcwd(), 'ffmpeg')
-        if not os.path.exists(ffmpeg_path):
-            await message.answer(
-                "❌ Для конвертации необходим ffmpeg, но он не найден.\n\n"
-                "Установите ffmpeg командой:\n"
-                "`apt-get update && apt-get install -y ffmpeg`\n\n"
-                "Или скачайте с ffmpeg.org и положите в папку с ботом.",
-                parse_mode="Markdown"
-            )
-            return
+# ========== ГОЛОС → ТЕКСТ ==========
+async def voice_to_text_start(message: types.Message, state: FSMContext):
+    await message.answer("🎤 Отправь голосовое сообщение, и я распознаю текст.", 
+                        reply_markup=ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton("⬅️ Назад")))
+    await ConverterStates.waiting_for_voice.set()
 
-    spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-    progress_msg = await message.answer(f"⏳ Конвертирую... {spinner[0]}")
-    output_path = None
+async def voice_to_text_process(message: types.Message, state: FSMContext):
+    if message.text == "⬅️ Назад":
+        await state.finish()
+        await converter_menu(message, state)
+        return
 
-    async def update_spinner():
-        i = 0
-        while True:
-            await asyncio.sleep(0.3)
-            i = (i + 1) % len(spinner)
-            try:
-                await message.bot.edit_message_text(
-                    f"⏳ Конвертирую... {spinner[i]}",
-                    chat_id=progress_msg.chat.id,
-                    message_id=progress_msg.message_id
-                )
-            except:
-                break
+    if not message.voice:
+        await message.answer("❌ Это не голосовое сообщение. Отправь голосовое.")
+        return
 
-    spinner_task = asyncio.create_task(update_spinner())
+    await state.finish()
+    status_msg = await message.answer("🎧 Скачиваю голосовое...")
 
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{fmt.lower()}", dir="/tmp") as tmp_out:
-            output_path = tmp_out.name
+        # Скачиваем файл
+        file = await message.voice.get_file()
+        ogg_path = os.path.join(tempfile.gettempdir(), f"voice_{message.from_user.id}.ogg")
+        await message.bot.download_file(file.file_path, ogg_path)
 
-        # Формируем команду ffmpeg
-        cmd = [ffmpeg_path, '-i', input_path, output_path]
+        await status_msg.edit_text("🔄 Конвертирую в WAV...")
+        wav_path = ogg_path.replace(".ogg", ".wav")
+        audio = AudioSegment.from_ogg(ogg_path)
+        audio.export(wav_path, format="wav")
 
-        # Специальная обработка для GIF
-        if fmt == "GIF":
-            # Делаем палитру для качественного GIF
-            palette_path = output_path + "_palette.png"
-            cmd_palette = [ffmpeg_path, '-i', input_path,
-                           '-vf', 'fps=15,scale=640:-1:flags=lanczos',
-                           '-y', palette_path]
-            process = await asyncio.create_subprocess_exec(*cmd_palette,
-                                                           stdout=asyncio.subprocess.PIPE,
-                                                           stderr=asyncio.subprocess.PIPE)
-            await process.communicate()
-            if os.path.exists(palette_path):
-                cmd_gif = [ffmpeg_path, '-i', input_path, '-i', palette_path,
-                           '-filter_complex', 'fps=15,scale=640:-1:flags=lanczos[x];[x][1:v]paletteuse',
-                           '-y', output_path]
-                process = await asyncio.create_subprocess_exec(*cmd_gif,
-                                                               stdout=asyncio.subprocess.PIPE,
-                                                               stderr=asyncio.subprocess.PIPE)
-                _, stderr = await process.communicate()
-                safe_remove_file(palette_path)
-            else:
-                # fallback
-                cmd = [ffmpeg_path, '-i', input_path, '-vf', 'fps=15,scale=640:-1', '-loop', '0', output_path]
-                process = await asyncio.create_subprocess_exec(*cmd,
-                                                               stdout=asyncio.subprocess.PIPE,
-                                                               stderr=asyncio.subprocess.PIPE)
-                _, stderr = await process.communicate()
-        else:
-            process = await asyncio.create_subprocess_exec(*cmd,
-                                                           stdout=asyncio.subprocess.PIPE,
-                                                           stderr=asyncio.subprocess.PIPE)
-            _, stderr = await process.communicate()
-
-        if process.returncode != 0:
-            error_msg = stderr.decode("utf-8", errors="ignore").strip()[:200]
-            raise Exception(f"ffmpeg error: {error_msg}")
-
-        file_size = os.path.getsize(output_path)
-        max_size = 50 * 1024 * 1024
-        if file_size > max_size:
-            raise Exception(f"Файл слишком большой: {file_size / (1024*1024):.1f} MB > 50 MB.\n"
-                            f"Попробуй другой формат (WEBM обычно меньше) или уменьши разрешение.")
-
-        spinner_task.cancel()
+        await status_msg.edit_text("🧠 Распознаю речь...")
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(wav_path) as source:
+            audio_data = recognizer.record(source)
+        
         try:
-            await spinner_task
-        except asyncio.CancelledError:
-            pass
-
-        await message.bot.edit_message_text("✅ Конвертация завершена! Отправляю файл...",
-                                            chat_id=progress_msg.chat.id,
-                                            message_id=progress_msg.message_id)
-        with open(output_path, 'rb') as f:
-            await message.answer_document(f, caption=f"✅ Конвертировано в {fmt.upper()}")
+            text = recognizer.recognize_google(audio_data, language="ru-RU")
+            await status_msg.edit_text(f"📝 *Распознанный текст:*\n\n{text}", parse_mode="Markdown")
+        except sr.UnknownValueError:
+            await status_msg.edit_text("❌ Не удалось распознать речь.")
+        except sr.RequestError as e:
+            await status_msg.edit_text(f"❌ Ошибка сервиса распознавания: {e}")
 
     except Exception as e:
-        logging.error(f"Ошибка конвертации: {e}")
-        spinner_task.cancel()
-        try:
-            await spinner_task
-        except asyncio.CancelledError:
-            pass
-
-        error_msg = str(e)
-        if "File too large" in error_msg or "слишком большой" in error_msg:
-            await message.bot.edit_message_text(f"❌ {error_msg}",
-                                                chat_id=progress_msg.chat.id,
-                                                message_id=progress_msg.message_id)
-        else:
-            await message.bot.edit_message_text(f"❌ Ошибка конвертации: {error_msg}\n"
-                                                f"Попробуй другой файл или формат.",
-                                                chat_id=progress_msg.chat.id,
-                                                message_id=progress_msg.message_id)
-        await asyncio.sleep(3)
-        await safe_delete_message_obj(progress_msg)
+        logger.error(f"Ошибка распознавания голоса: {e}")
+        await status_msg.edit_text("❌ Произошла ошибка при обработке голосового.")
     finally:
-        safe_remove_file(input_path)
-        safe_remove_file(output_path)
+        safe_remove_file(ogg_path)
+        if 'wav_path' in locals():
+            safe_remove_file(wav_path)
 
-    await message.answer("Главное меню", reply_markup=get_main_menu())
+    await message.answer("Выбери действие:", reply_markup=get_converter_menu())
 
+# ========== ВИДЕОКРУЖОК → GIF / ТЕКСТ ==========
+async def video_note_start(message: types.Message, state: FSMContext):
+    await message.answer("🎥 Отправь видеокружок. Я определю, есть ли там речь, и либо распознаю текст, либо сделаю GIF.",
+                        reply_markup=ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton("⬅️ Назад")))
+    await ConverterStates.waiting_for_video_note.set()
+
+async def video_note_process(message: types.Message, state: FSMContext):
+    if message.text == "⬅️ Назад":
+        await state.finish()
+        await converter_menu(message, state)
+        return
+
+    if not message.video_note:
+        await message.answer("❌ Это не видеокружок. Отправь кружок.")
+        return
+
+    await state.finish()
+    status_msg = await message.answer("📥 Скачиваю кружок...")
+
+    try:
+        file = await message.video_note.get_file()
+        video_path = os.path.join(tempfile.gettempdir(), f"circle_{message.from_user.id}.mp4")
+        await message.bot.download_file(file.file_path, video_path)
+
+        # Пытаемся извлечь аудио и распознать речь
+        text = None
+        try:
+            await status_msg.edit_text("🔊 Извлекаю аудио...")
+            wav_path = video_path.replace(".mp4", ".wav")
+            import subprocess
+            subprocess.run(
+                ["ffmpeg", "-i", video_path, "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", wav_path, "-y"],
+                capture_output=True, check=True
+            )
+            recognizer = sr.Recognizer()
+            with sr.AudioFile(wav_path) as source:
+                audio_data = recognizer.record(source)
+            text = recognizer.recognize_google(audio_data, language="ru-RU")
+            safe_remove_file(wav_path)
+        except Exception:
+            pass  # речи нет или не удалось распознать
+
+        if text:
+            await status_msg.edit_text(f"📝 *Распознанный текст:*\n\n{text}", parse_mode="Markdown")
+        else:
+            await status_msg.edit_text("🎞 Конвертирую в GIF...")
+            gif_path = video_path.replace(".mp4", ".gif")
+            subprocess.run(
+                ["ffmpeg", "-i", video_path, "-vf", "fps=15,scale=320:-1:flags=lanczos", "-loop", "0", gif_path, "-y"],
+                capture_output=True, check=True
+            )
+            with open(gif_path, 'rb') as gif:
+                await message.answer_document(gif, caption="🎥 Твой GIF")
+            await status_msg.delete()
+            safe_remove_file(gif_path)
+
+    except Exception as e:
+        logger.error(f"Ошибка обработки кружка: {e}")
+        await status_msg.edit_text("❌ Не удалось обработать видеокружок.")
+    finally:
+        safe_remove_file(video_path)
+
+    await message.answer("Выбери действие:", reply_markup=get_converter_menu())
+
+# ========== YouTube / SoundCloud ==========
+async def url_download_start(message: types.Message, state: FSMContext):
+    await message.answer("🔗 Отправь ссылку на YouTube или SoundCloud:",
+                        reply_markup=ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton("⬅️ Назад")))
+    await ConverterStates.waiting_for_url.set()
+
+async def url_download_process(message: types.Message, state: FSMContext):
+    if message.text == "⬅️ Назад":
+        await state.finish()
+        await converter_menu(message, state)
+        return
+
+    url = message.text.strip()
+    if not url.startswith("http"):
+        await message.answer("❌ Это не ссылка.")
+        return
+
+    await state.update_data(url=url)
+    source = "🎵 SoundCloud" if "soundcloud" in url else "🌐 Другое"
+    if "youtube" in url or "youtu.be" in url:
+        source = "📺 YouTube"
+
+    buttons = []
+    if source == "📺 YouTube":
+        buttons.append([KeyboardButton("MP4 (видео)")])
+        buttons.append([KeyboardButton("MP3 (аудио)")])
+    elif source == "🎵 SoundCloud":
+        buttons.append([KeyboardButton("MP3 (аудио)")])
+    else:
+        buttons.append([KeyboardButton("MP3 (аудио)")])
+        buttons.append([KeyboardButton("MP4 (видео)")])
+    buttons.append([KeyboardButton("⬅️ Назад")])
+    kb = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    await message.answer(f"Выбери формат для {source}:", reply_markup=kb)
+    await ConverterStates.waiting_for_format.set()
+
+async def url_format_chosen(message: types.Message, state: FSMContext):
+    if message.text == "⬅️ Назад":
+        await state.finish()
+        await converter_menu(message, state)
+        return
+
+    fmt = message.text
+    data = await state.get_data()
+    url = data.get("url")
+    if not url:
+        await state.finish()
+        await converter_menu(message, state)
+        return
+
+    await state.finish()
+    progress_msg = await message.answer("⏳ Начинаю скачивание...")
+
+    loop = asyncio.get_running_loop()
+    try:
+        def sync_download():
+            tmp_dir = tempfile.gettempdir()
+            outtmpl = os.path.join(tmp_dir, '%(title).100s-%(id)s.%(ext)s')
+            opts = {
+                "outtmpl": outtmpl,
+                "noplaylist": True,
+                "quiet": True,
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            if "youtube" in url or "youtu.be" in url:
+                opts["format"] = "bestvideo[height<=720]+bestaudio/best[height<=720]"
+                if fmt == "MP3 (аудио)":
+                    opts["format"] = "bestaudio/best"
+                    opts["postprocessors"] = [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}]
+                elif fmt == "MP4 (видео)":
+                    opts["merge_output_format"] = "mp4"
+            else:
+                if fmt == "MP3 (аудио)":
+                    opts["format"] = "bestaudio/best"
+                    opts["postprocessors"] = [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}]
+                elif fmt == "MP4 (видео)":
+                    opts["format"] = "best"
+                    opts["merge_output_format"] = "mp4"
+
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
+                if fmt == "MP3 (аудио)":
+                    filename = filename.rsplit(".", 1)[0] + ".mp3"
+                return filename
+
+        file_path = await asyncio.to_thread(sync_download)
+        await progress_msg.edit_text("✅ Скачивание завершено! Отправляю файл...")
+        with open(file_path, 'rb') as f:
+            if file_path.endswith(".mp3"):
+                await message.answer_audio(f, title=os.path.basename(file_path))
+            else:
+                await message.answer_document(f)
+        safe_remove_file(file_path)
+        await progress_msg.delete()
+
+    except Exception as e:
+        logger.error(f"Ошибка скачивания: {e}")
+        await progress_msg.edit_text(f"❌ Не удалось скачать: {str(e)[:200]}")
+        await asyncio.sleep(5)
+        await progress_msg.delete()
+
+    await message.answer("Выбери действие:", reply_markup=get_converter_menu())
+
+# ========== Регистрация ==========
 def register(dp: Dispatcher):
-    dp.register_message_handler(converter_menu, text="🔄 Конвертер", state="*")
-    dp.register_message_handler(converter_file_text, state=ConverterStates.file, content_types=types.ContentTypes.TEXT)
-    dp.register_message_handler(converter_file, content_types=['document', 'video', 'audio'], state=ConverterStates.file)
-    dp.register_message_handler(converter_format, state=ConverterStates.format)
+    dp.register_message_handler(converter_menu, text="🎤 Конвертер", state="*")
+    dp.register_message_handler(voice_to_text_start, text="🎤 Голос в текст", state="*")
+    dp.register_message_handler(voice_to_text_process, state=ConverterStates.waiting_for_voice, content_types=types.ContentTypes.ANY)
+    dp.register_message_handler(video_note_start, text="🎥 Кружок в GIF", state="*")
+    dp.register_message_handler(video_note_process, state=ConverterStates.waiting_for_video_note, content_types=types.ContentTypes.ANY)
+    dp.register_message_handler(url_download_start, text="📥 YouTube / SoundCloud", state="*")
+    dp.register_message_handler(url_download_process, state=ConverterStates.waiting_for_url)
+    dp.register_message_handler(url_format_chosen, state=ConverterStates.waiting_for_format)
