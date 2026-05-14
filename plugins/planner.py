@@ -10,6 +10,11 @@ from keyboards import get_plans_menu, get_main_menu
 from reminder_utils import load_reminder_settings
 import ai_advisor
 
+# Импорты для запуска опросов из уведомлений
+from plugins.sleep import sleep_start
+from plugins.checkin import checkin_start
+from plugins.day_summary import day_summary_start
+
 logger = logging.getLogger(__name__)
 
 # ========== FSM ==========
@@ -135,7 +140,7 @@ async def today_view(message: types.Message, state: FSMContext):
     await message.answer(text, reply_markup=get_today_actions_keyboard(), parse_mode="Markdown")
 
 # ========== БЫСТРЫЕ ДЕЙСТВИЯ ==========
-# (быстрый сон и чекин — оставлены без изменений)
+# (быстрый сон и чекин — без изменений)
 
 async def quick_sleep_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -286,7 +291,6 @@ async def my_tasks(message: types.Message, state: FSMContext):
 async def handle_complete(message: types.Message):
     if "✅ Выполнить #" in message.text:
         task_id = int(message.text.split("#")[1])
-        # Проверяем, что задача принадлежит пользователю
         task = await db.get_task_by_id(task_id)
         if task and task['user_id'] == message.from_user.id:
             await db.complete_task(task_id, message.from_user.id, completed=True)
@@ -361,14 +365,13 @@ async def my_routines(message: types.Message, state: FSMContext):
         await message.answer(text, parse_mode="Markdown")
     await plans_menu(message, state)
 
-# ========== НАПОМИНАНИЯ ==========
+# ========== НАПОМИНАНИЯ (дела + опросы с кнопками) ==========
 async def check_reminders():
     from bot import bot
     now_utc = datetime.utcnow()
     tasks = await db.get_tasks_due_now(now_utc)
     for task in tasks:
         user_id = task['user_id']
-        # Только если задача всё ещё активна (не отменена/выполнена ранее)
         if not task.get('is_active'): continue
         kb = ReplyKeyboardMarkup(resize_keyboard=True)
         kb.add(KeyboardButton(f"✅ Выполнить #{task['id']}"))
@@ -376,13 +379,13 @@ async def check_reminders():
         kb.add(KeyboardButton(f"❌ Отменить #{task['id']}"))
         try:
             await bot.send_message(user_id, f"⏰ *{task['title']}*\n🕒 {task['start_date']} в {task['start_time']}", reply_markup=kb, parse_mode="Markdown")
-            # НЕ ДЕАКТИВИРУЕМ! Ждём ответа
         except Exception as e:
             logging.error(f"Ошибка отправки напоминания: {e}")
 
 async def check_all_reminders():
-    """Расширенная версия: помимо опросов отправляет рутины с кнопками"""
+    """Расширенная версия: опросы с кнопками, рутины с кнопками"""
     try:
+        from bot import bot
         now_utc = datetime.utcnow()
         async with db.pool.acquire() as conn:
             users = await conn.fetch("SELECT DISTINCT user_id FROM users")
@@ -394,24 +397,33 @@ async def check_all_reminders():
             today_str = user_time.strftime("%Y-%m-%d")
             today_date = user_time.date()
 
-            # Опросы (текст)
+            # Сон с кнопками
             sleep_set = await db.get_reminder_setting(user_id, "sleep")
             if sleep_set["enabled"] and sleep_set["times"] and sleep_set["times"][0] == current_time:
                 if not await db.has_sleep_today(user_id):
-                    await bot.send_message(user_id, "🛌 Пора записать сон")
+                    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+                    kb.add(KeyboardButton("✅ Пройти сон"), KeyboardButton("⏰ Напомнить позже"))
+                    await bot.send_message(user_id, "🛌 Пора записать сон", reply_markup=kb)
 
+            # Чекин с кнопками
             check_set = await db.get_reminder_setting(user_id, "checkins")
             if check_set["enabled"] and current_time in check_set["times"]:
                 checkins = await db._load_json(user_id, "checkins.json")
                 if not any(c.get("date") == today_str for c in checkins):
-                    await bot.send_message(user_id, "⚡️ Время для чек-ина")
+                    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+                    kb.add(KeyboardButton("✅ Пройти чекин"), KeyboardButton("⏰ Напомнить позже"))
+                    await bot.send_message(user_id, "⚡️ Время для чек-ина", reply_markup=kb)
 
+            # Итог дня с кнопками
             summary_set = await db.get_reminder_setting(user_id, "summary")
             if summary_set["enabled"] and summary_set["times"] and summary_set["times"][0] == current_time:
                 target_date = await db.get_target_date_for_summary(user_id)
                 if target_date and not await db.has_day_summary_for_date(user_id, target_date):
-                    await bot.send_message(user_id, "📝 Подведи итог дня")
+                    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+                    kb.add(KeyboardButton("✅ Пройти итог"), KeyboardButton("⏰ Напомнить позже"))
+                    await bot.send_message(user_id, "📝 Подведи итог дня", reply_markup=kb)
 
+            # Вода и еда (без кнопок)
             water_set = await db.get_reminder_setting(user_id, "water")
             if water_set["enabled"] and current_time in water_set["times"]:
                 await bot.send_message(user_id, "💧 Не забывай пить воду!")
@@ -433,7 +445,6 @@ async def check_all_reminders():
                     start_dt = datetime.combine(today_date, time(start_hour, start_minute))
                     remind_dt = start_dt - timedelta(minutes=remind_minutes)
                     if remind_dt.strftime("%H:%M") == current_time:
-                        # Проверяем, не выполнена ли уже сегодня
                         async with db.pool.acquire() as conn:
                             done = await conn.fetchval("SELECT 1 FROM task_logs WHERE task_id = $1 AND due_date = $2 AND completed = TRUE", r['id'], today_date)
                         if not done:
@@ -444,6 +455,19 @@ async def check_all_reminders():
                             await bot.send_message(user_id, f"🔄 *{r['title']}*\n🕒 {t if isinstance(t,str) else t.strftime('%H:%M')}", reply_markup=kb, parse_mode="Markdown")
     except Exception as e:
         logging.error(f"Ошибка в check_all_reminders: {e}", exc_info=True)
+
+# Обработчики кнопок опросов
+async def start_sleep_from_reminder(message: types.Message, state: FSMContext):
+    await sleep_start(message, state)
+
+async def start_checkin_from_reminder(message: types.Message, state: FSMContext):
+    await checkin_start(message, state)
+
+async def start_summary_from_reminder(message: types.Message, state: FSMContext):
+    await day_summary_start(message, state)
+
+async def postpone_reminder(message: types.Message):
+    await message.answer("⏰ Напомню позже.", reply_markup=get_main_menu())
 
 # Обработчики кнопок рутин
 async def handle_routine_done(message: types.Message):
@@ -457,7 +481,6 @@ async def handle_routine_done(message: types.Message):
 
 async def handle_routine_snooze(message: types.Message):
     if "⏰ Позже #" in message.text:
-        # Просто подтверждаем, реальной логики откладывания для рутин пока нет
         await message.answer("⏰ Напомню позже.", reply_markup=get_main_menu())
 
 async def handle_routine_skip(message: types.Message):
@@ -581,6 +604,14 @@ def register(dp: Dispatcher):
     dp.register_message_handler(handle_complete, lambda m: m.text and "✅ Выполнить #" in m.text, state="*")
     dp.register_message_handler(handle_postpone, lambda m: m.text and "⏰ Отложить #" in m.text, state="*")
     dp.register_message_handler(handle_cancel, lambda m: m.text and "❌ Отменить #" in m.text, state="*")
+
+    # Обработчики опросов с кнопками
+    dp.register_message_handler(start_sleep_from_reminder, text="✅ Пройти сон", state="*")
+    dp.register_message_handler(start_checkin_from_reminder, text="✅ Пройти чекин", state="*")
+    dp.register_message_handler(start_summary_from_reminder, text="✅ Пройти итог", state="*")
+    dp.register_message_handler(postpone_reminder, text="⏰ Напомнить позже", state="*")
+
+    # Рутины
     dp.register_message_handler(handle_routine_done, lambda m: m.text and "✅ Выполнена #" in m.text, state="*")
     dp.register_message_handler(handle_routine_snooze, lambda m: m.text and "⏰ Позже #" in m.text, state="*")
     dp.register_message_handler(handle_routine_skip, lambda m: m.text and "❌ Пропустить #" in m.text, state="*")
