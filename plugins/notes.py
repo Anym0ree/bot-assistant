@@ -20,9 +20,9 @@ class NoteStates(StatesGroup):
     # состояния для списков
     new_list_title = State()
     new_list_items = State()
-    list_view = State()             # просмотр и работа со списком
-    list_add_item = State()        # ввод нового пункта
-    list_edit_title = State()      # смена названия списка
+    list_view = State()
+    list_add_item = State()
+    list_edit_title = State()
 
 # ---------- Клавиатуры ----------
 def get_notes_main_keyboard():
@@ -235,9 +235,9 @@ async def new_list_items(message: types.Message, state: FSMContext):
     note_id = await db.add_note_v2(user_id, section['id'], f"📋 {title}", content)
     await state.finish()
     if note_id:
-        # сразу показываем список в режиме просмотра
         fake_note = {"id": note_id, "title": f"📋 {title}", "content": content}
         await state.update_data(current_list=fake_note)
+        await NoteStates.list_view.set()
         await show_list_view(message, state, fake_note)
     else:
         await message.answer("❌ Ошибка при создании списка.", reply_markup=get_section_actions_keyboard())
@@ -255,7 +255,6 @@ async def list_notes_in_section(message: types.Message, state: FSMContext):
         await message.answer("В этом разделе пока нет записей.", reply_markup=get_section_actions_keyboard())
         return
 
-    # Сохраняем ID всех записей (и заметок, и списков) для редактирования/удаления
     ids = [n['id'] for n in notes]
     await state.update_data(current_notes_ids=ids)
 
@@ -264,7 +263,6 @@ async def list_notes_in_section(message: types.Message, state: FSMContext):
     for i, n in enumerate(notes, 1):
         title = n['title'] or 'Без заголовка'
         if title.startswith("📋 "):
-            # это список, делаем кнопку для открытия
             text += f"{i}. {title}\n"
             kb.add(KeyboardButton(f"📋 Открыть #{n['id']}"))
         else:
@@ -274,7 +272,7 @@ async def list_notes_in_section(message: types.Message, state: FSMContext):
     kb.add(KeyboardButton("⬅️ Назад к разделу"))
     await message.answer(text, reply_markup=kb, parse_mode="Markdown")
 
-# ---------- Открыть список по кнопке из общего списка ----------
+# ---------- Открыть список по кнопке ----------
 async def open_list_by_button(message: types.Message, state: FSMContext):
     if not message.text.startswith("📋 Открыть #"):
         return
@@ -300,9 +298,7 @@ async def show_list_view(message: types.Message, state: FSMContext, note):
         line = f"{'~' if done else ''}{item['text']}{'~' if done else ''}"
         text += f"{i}. {line}\n"
 
-    # клавиатура управления (Reply)
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    # кнопки для отметки пунктов (максимум 9, чтобы не забивать)
     for i, item in enumerate(items[:9], 1):
         if not item.get('done'):
             kb.add(KeyboardButton(f"✅ Отм. {i}"))
@@ -328,7 +324,6 @@ async def list_toggle_item(message: types.Message, state: FSMContext):
         await db.update_note(note['id'], message.from_user.id, content=new_content)
         note['content'] = new_content
         await state.update_data(current_list=note)
-    # перерисовываем список
     await show_list_view(message, state, note)
 
 # ---------- Добавление пункта ----------
@@ -351,7 +346,6 @@ async def list_add_item_save(message: types.Message, state: FSMContext):
     data = await state.get_data()
     note = data.get('current_list')
     if not note:
-        await message.answer("Список не найден.")
         return
     items = json.loads(note['content'])
     items.append({"text": text, "done": False})
@@ -404,7 +398,6 @@ async def list_delete(message: types.Message, state: FSMContext):
 # ---------- Обратно из списка в раздел ----------
 async def list_back_to_section(message: types.Message, state: FSMContext):
     await state.finish()
-    # имитируем вызов section_selected, чтобы вернуться в меню раздела
     data = await state.get_data()
     section = data.get('current_section')
     if section:
@@ -414,7 +407,7 @@ async def list_back_to_section(message: types.Message, state: FSMContext):
     else:
         await list_sections(message, state)
 
-# ---------- Общие обработчики редактирования/удаления (оставлены без изменений) ----------
+# ---------- Редактирование и удаление заметок (прежние) ----------
 async def edit_note_command(message: types.Message, state: FSMContext):
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
