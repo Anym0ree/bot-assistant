@@ -22,11 +22,15 @@ async def my_achievements(message: types.Message):
     achievements = await db.get_user_achievements(user_id)
     all_achievements = await db.get_all_achievements()
 
+    nick = await db.get_nickname(user_id)
+    nickname_str = nick if nick else "не задан"
+
     text = f"🏅 *Твой прогресс*\n\n"
+    text += f"👤 Никнейм: {nickname_str}\n"
     text += f"⭐ Уровень: {xp_data['level']}\n"
     text += f"✨ XP: {xp_data['xp']}\n\n"
-    text += "📜 *Полученные достижения:*\n"
 
+    text += "📜 *Полученные достижения:*\n"
     if achievements:
         for a in achievements:
             text += f"{a['icon']} {a['name']} — {a['awarded_at'].strftime('%d.%m.%Y')}\n"
@@ -42,9 +46,24 @@ async def my_achievements(message: types.Message):
     await message.answer(text, reply_markup=get_achievements_menu_keyboard(), parse_mode="Markdown")
 
 async def leaderboard(message: types.Message):
+    user_id = message.from_user.id
     top = await db.get_leaderboard()
+    nick = await db.get_nickname(user_id)
+
+    if not nick:
+        await message.answer(
+            "📊 *Таблица лидеров*\n\n"
+            "Чтобы участвовать, задай никнейм в настройках (⚙️ Настройки → ✏️ Редактировать профиль).",
+            parse_mode="Markdown"
+        )
+        return
+
     if not top:
-        await message.answer("Таблица лидеров пока пуста. Установи никнейм в настройках, чтобы участвовать!")
+        await message.answer(
+            "📊 *Таблица лидеров*\n\n"
+            "Пока никто не заработал XP. Начни записывать сон, чекины и дела, чтобы попасть в топ!",
+            parse_mode="Markdown"
+        )
         return
 
     text = "📊 *Таблица лидеров*\n\n"
@@ -56,11 +75,8 @@ async def leaderboard(message: types.Message):
     kb.add(KeyboardButton("🔄 Обновить"), KeyboardButton("⬅️ Назад"))
     await message.answer(text, reply_markup=kb, parse_mode="Markdown")
 
-async def back_to_achievements(message: types.Message, state: FSMContext):
-    await achievements_main(message, state)
-
 def register(dp: Dispatcher):
     dp.register_message_handler(achievements_main, text="🏆 Достижения", state="*")
     dp.register_message_handler(my_achievements, text="🏅 Мои достижения", state="*")
     dp.register_message_handler(leaderboard, text="📊 Таблица лидеров", state="*")
-    
+    # Обработчик «Назад» здесь не регистрируем, он теперь в common.py
