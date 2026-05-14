@@ -13,11 +13,11 @@ def get_main_menu():
         [KeyboardButton(text="🎤 Конвертер")],
         [KeyboardButton(text="🤖 AI-совет")],
         [KeyboardButton(text="🏆 Достижения")],
+        [KeyboardButton(text="🆘 Срыв")],          # <-- новая кнопка
         [KeyboardButton(text="📤 Экспорт")],
         [KeyboardButton(text="⚙️ Настройки")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
-
 def get_record_menu():
     """Меню «Записать» — быстрый доступ к опросам"""
     buttons = [
