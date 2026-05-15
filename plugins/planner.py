@@ -10,14 +10,10 @@ from keyboards import get_plans_menu, get_main_menu
 from reminder_utils import load_reminder_settings
 import ai_advisor
 
-# Импорты для запуска опросов из уведомлений
-from plugins.sleep import sleep_start
-from plugins.checkin import checkin_start
-from plugins.day_summary import day_summary_start
-
 logger = logging.getLogger(__name__)
 
-# ========== FSM ==========
+undo_data = {}
+
 class AddTaskStates(StatesGroup):
     title = State()
     datetime = State()
@@ -39,17 +35,9 @@ class QuickCheckinStates(StatesGroup):
 class DailyQuestionStates(StatesGroup):
     answer = State()
 
-# ========== КЛАВИАТУРЫ ==========
-def get_today_actions_keyboard():
-    buttons = [
-        [KeyboardButton("✅ Записать сон"), KeyboardButton("⚡ Быстрый чекин")],
-        [KeyboardButton("📝 Итог дня")],
-        [KeyboardButton("➕ Дело"), KeyboardButton("🔄 Рутина")],
-        [KeyboardButton("⬅️ Назад")]
-    ]
-    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
-
-# ========== 📋 СЕГОДНЯ (дашборд) ==========
+# ------------------------------------------------------------
+# 📋 НОВЫЙ ДАШБОРД «СЕГОДНЯ»
+# ------------------------------------------------------------
 async def today_view(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     tz = await db.get_user_timezone(user_id) or 3
@@ -57,7 +45,27 @@ async def today_view(message: types.Message, state: FSMContext):
     today_str = now_local.strftime("%Y-%m-%d")
     today_date = now_local.date()
 
-    text = f"📋 *{today_str}, {['пн','вт','ср','чт','пт','сб','вс'][now_local.weekday()]}*\n\n"
+    # Статус дня
+    status_emoji = "🌤️"
+    status_text = "Доброе утро! Пора начинать."
+    try:
+        checkin = await db.get_last_checkin(user_id, today_str)
+        if checkin:
+            energy = checkin['energy']
+            stress = checkin['stress']
+            if energy >= 7 and stress <= 3:
+                status_emoji = "😊"
+                status_text = "Отличный день для побед!"
+            elif energy >= 4 and stress <= 6:
+                status_emoji = "😐"
+                status_text = "Нормальный день, всё под контролем."
+            else:
+                status_emoji = "😞"
+                status_text = "День тяжёлый, но ты справляешься."
+    except:
+        pass
+
+    text = f"{status_emoji} *{status_text}*\n\n"
 
     # Погода
     from plugins.weather import get_weather_by_city, get_weather_by_coords
@@ -66,82 +74,127 @@ async def today_view(message: types.Message, state: FSMContext):
     if loc and (loc['city'] or (loc['lat'] and loc['lon'])):
         try:
             if loc['city']:
-                data = await get_weather_by_city(loc['city'])
+                wdata = await get_weather_by_city(loc['city'])
             else:
-                data = await get_weather_by_coords(loc['lat'], loc['lon'])
-            if data:
-                temp = data['main']['temp']
-                desc = data['weather'][0]['description']
+                wdata = await get_weather_by_coords(loc['lat'], loc['lon'])
+            if wdata:
+                temp = wdata['main']['temp']
+                desc = wdata['weather'][0]['description']
                 text += f"🌤️ {temp:.0f}°C, {desc}\n"
         except:
             text += "🌤️ Погода недоступна\n"
     else:
         text += "🌤️ *Погода:* укажи город в настройках\n"
 
-    # Сон
-    async with db.pool.acquire() as conn:
-        sleep_row = await conn.fetchrow("SELECT bed_time, wake_time, quality FROM sleep WHERE user_id = $1 AND date = $2", user_id, today_str)
-    text += "🛌 *Сон:* " + (f"✅ {sleep_row['bed_time']}–{sleep_row['wake_time']}, кач-во {sleep_row['quality']}/10" if sleep_row else "❌ не записан") + "\n"
+    # Быстрые действия
+    quick_kb = ReplyKeyboardMarkup(resize_keyboard=True, row_width=4)
+    quick_kb.add(KeyboardButton("🛌 Сон"), KeyboardButton("⚡ Чекин"), KeyboardButton("🍽 Еда"), KeyboardButton("📝 Итог"))
+    await message.answer(text, reply_markup=quick_kb, parse_mode="Markdown")
 
-    # Чек-ин
-    async with db.pool.acquire() as conn:
-        checkin_row = await conn.fetchrow("SELECT energy, stress FROM checkins WHERE user_id = $1 AND date = $2", user_id, today_str)
-    text += "⚡️ *Чек-ин:* " + (f"✅ энергия {checkin_row['energy']}/10, стресс {checkin_row['stress']}/10" if checkin_row else "❌ не сделан") + "\n"
-
-    # Итог дня
-    local_hour = now_local.hour
-    summary_available = local_hour >= 18 or local_hour < 6
-    async with db.pool.acquire() as conn:
-        summary_row = await conn.fetchrow("SELECT score FROM day_summary WHERE user_id = $1 AND date = $2", user_id, today_str)
-    if summary_row:
-        text += f"📝 *Итог дня:* ✅ {summary_row['score']}/10\n"
-    elif summary_available:
-        text += "📝 *Итог дня:* ⬜ можно записать\n"
-    else:
-        text += "📝 *Итог дня:* 🔒 будет доступен после 18:00\n"
-
-    # Дела
-    async with db.pool.acquire() as conn:
-        tasks = await conn.fetch("""
-            SELECT id, title, is_active,
-                   EXISTS(SELECT 1 FROM task_logs WHERE task_id = tasks.id AND due_date = $2 AND completed = TRUE) as done
-            FROM tasks WHERE user_id = $1 AND task_type = 'once' AND start_date = $2 ORDER BY start_time
-        """, user_id, today_date)
-    active_tasks = [t for t in tasks if t['is_active'] and not t['done']]
-    done_tasks = [t for t in tasks if t['done']]
-    if active_tasks or done_tasks:
-        text += "\n📌 *Дела:*\n"
-        for t in active_tasks:
-            text += f"  ⬜ {t['title']}\n"
-        for t in done_tasks:
-            text += f"  ✅ ~{t['title']}~\n"
-
-    # Рутины
+    # Задачи и рутины
+    tasks = await db.get_upcoming_tasks(user_id)
     routines = await db.get_recurring_tasks_by_user(user_id)
-    today_routines = []
+    active_items = []
+    for t in tasks:
+        if t['is_active']:
+            active_items.append({"title": t['title'], "id": t['id'], "type": "task"})
     for r in routines:
         if await should_run_today(r, today_date):
-            async with db.pool.acquire() as conn:
-                done = await conn.fetchval("SELECT 1 FROM task_logs WHERE task_id = $1 AND due_date = $2 AND completed = TRUE", r['id'], today_date)
-            today_routines.append({"title": r['title'], "done": done is not None})
-    if today_routines:
-        text += "\n🔄 *Рутины:*\n"
-        for r in today_routines:
-            icon = "✅" if r['done'] else "⬜"
-            name = f"~{r['title']}~" if r['done'] else r['title']
-            text += f"  {icon} {name}\n"
+            done = await db.was_routine_completed_today(r['id'], today_str)
+            if not done:
+                active_items.append({"title": r['title'], "id": r['id'], "type": "routine"})
 
-    # Вода и еда
-    items = await db.get_today_food_and_drinks(user_id)
-    water_count = sum(1 for i in items if i['type'] == "🥤 Напитки" and "вода" in i['text'].lower())
-    food_count = sum(1 for i in items if i['type'] == "🍽 Еда")
-    text += f"\n💧 Вода: {water_count} записей | 🍽 Еда: {food_count} записей"
+    if active_items:
+        items_text = "\n📌 *Задачи и рутины:*\n"
+        items_kb = ReplyKeyboardMarkup(resize_keyboard=True)
+        for item in active_items:
+            items_text += f"  • {item['title']}\n"
+            items_kb.add(KeyboardButton(f"✅ {item['title'][:30]}"))
+        items_text += "\nДля завершения нажми на кнопку ниже."
+        await message.answer(items_text, reply_markup=items_kb, parse_mode="Markdown")
+    else:
+        await message.answer("📌 *На сегодня ничего не запланировано.*", parse_mode="Markdown")
 
-    await message.answer(text, reply_markup=get_today_actions_keyboard(), parse_mode="Markdown")
+# ------------------------------------------------------------
+# ПОДТВЕРЖДЕНИЕ И ОТМЕНА
+# ------------------------------------------------------------
+async def complete_item_start(message: types.Message, state: FSMContext):
+    if not message.text.startswith("✅ "):
+        return
+    title = message.text[2:].strip()
+    user_id = message.from_user.id
+    task = await db.find_task_by_title(user_id, title)
+    if task:
+        await state.update_data(completing_item={"id": task['id'], "type": "task", "title": title})
+        kb = ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.add(KeyboardButton("✅ Да, выполнено"), KeyboardButton("↩️ Отмена"))
+        await message.answer(f"«{title}» — выполнено?", reply_markup=kb)
+        return
+    routine = await db.find_routine_by_title(user_id, title)
+    if routine:
+        await state.update_data(completing_item={"id": routine['id'], "type": "routine", "title": title})
+        kb = ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.add(KeyboardButton("✅ Да, выполнено"), KeyboardButton("↩️ Отмена"))
+        await message.answer(f"«{title}» — выполнено?", reply_markup=kb)
+        return
+    await message.answer("❌ Не найдено.")
 
-# ========== БЫСТРЫЕ ДЕЙСТВИЯ ==========
-# (быстрый сон и чекин — без изменений)
+async def complete_item_confirm(message: types.Message, state: FSMContext):
+    if message.text != "✅ Да, выполнено":
+        await state.finish()
+        await message.answer("Главное меню", reply_markup=get_main_menu())
+        return
+    data = await state.get_data()
+    item = data.get("completing_item")
+    if not item:
+        await state.finish()
+        return
+    user_id = message.from_user.id
+    if item['type'] == "task":
+        await db.complete_task(item['id'], user_id, completed=True)
+        undo_data[user_id] = {"action": "complete_task", "id": item['id'], "time": datetime.utcnow()}
+        kb = ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.add(KeyboardButton("↩️ Отменить"))
+        msg = await message.answer("✅ Дело выполнено! Можно отменить.", reply_markup=kb)
+        asyncio.create_task(delete_message_after(msg, 10))
+    else:
+        await db.complete_routine(item['id'], user_id)
+        undo_data[user_id] = {"action": "complete_routine", "id": item['id'], "time": datetime.utcnow()}
+        kb = ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.add(KeyboardButton("↩️ Отменить"))
+        msg = await message.answer("✅ Рутина выполнена! Можно отменить.", reply_markup=kb)
+        asyncio.create_task(delete_message_after(msg, 10))
+    await state.finish()
 
+async def delete_message_after(message: types.Message, delay: int):
+    await asyncio.sleep(delay)
+    try:
+        await message.delete()
+    except:
+        pass
+
+async def undo_last_action(message: types.Message):
+    user_id = message.from_user.id
+    if user_id not in undo_data:
+        await message.answer("Нечего отменять.")
+        return
+    info = undo_data[user_id]
+    if (datetime.utcnow() - info['time']).seconds > 10:
+        await message.answer("Слишком поздно для отмены.")
+        del undo_data[user_id]
+        return
+    if info['action'] == "complete_task":
+        await db.undo_complete_task(info['id'], user_id)
+        await message.answer("↩️ Дело возвращено.")
+    elif info['action'] == "complete_routine":
+        await db.undo_complete_routine(info['id'], user_id)
+        await message.answer("↩️ Рутина возвращена.")
+    del undo_data[user_id]
+    await message.answer("Главное меню", reply_markup=get_main_menu())
+
+# ------------------------------------------------------------
+# ОСТАЛЬНЫЕ ФУНКЦИИ (быстрые действия, дела, рутины, уведомления, утро, вопрос дня)
+# ------------------------------------------------------------
 async def quick_sleep_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     async with db.pool.acquire() as conn:
@@ -167,8 +220,7 @@ async def quick_sleep_same(message: types.Message, state: FSMContext):
 
 async def ask_bed_time(message: types.Message, state: FSMContext):
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    for t in ["22:00","23:00","00:00","01:00","02:00"]:
-        kb.add(KeyboardButton(t))
+    for t in ["22:00","23:00","00:00","01:00","02:00"]: kb.add(KeyboardButton(t))
     kb.add(KeyboardButton("⬅️ Назад"))
     await message.answer("Во сколько лёг?", reply_markup=kb)
     await QuickSleepStates.bed_time.set()
@@ -177,8 +229,7 @@ async def quick_sleep_bed(message: types.Message, state: FSMContext):
     if message.text == "⬅️ Назад": await state.finish(); await plans_menu(message, state); return
     await state.update_data(bed_time=message.text)
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    for t in ["06:00","07:00","08:00","09:00","10:00"]:
-        kb.add(KeyboardButton(t))
+    for t in ["06:00","07:00","08:00","09:00","10:00"]: kb.add(KeyboardButton(t))
     kb.add(KeyboardButton("⬅️ Назад"))
     await message.answer("Во сколько встал?", reply_markup=kb)
     await QuickSleepStates.wake_time.set()
@@ -217,7 +268,6 @@ async def quick_checkin_stress(message: types.Message, state: FSMContext):
         await state.finish()
         await message.answer("✅ Чекин записан!", reply_markup=get_main_menu())
 
-# ========== ДЕЛА ==========
 async def add_task_start(message: types.Message, state: FSMContext):
     await message.answer("Что нужно сделать?")
     await AddTaskStates.title.set()
@@ -284,37 +334,10 @@ async def my_tasks(message: types.Message, state: FSMContext):
         if t['done']: line = f"~{line}~"
         text += line + "\n"
         if not t['done'] and t['is_active']:
-            kb.add(KeyboardButton(f"✅ Выполнить #{t['id']}"))
+            kb.add(KeyboardButton(f"✅ {t['title'][:20]}"))
     kb.add(KeyboardButton("⬅️ Назад"))
     await message.answer(text, reply_markup=kb, parse_mode="Markdown")
 
-async def handle_complete(message: types.Message):
-    if "✅ Выполнить #" in message.text:
-        task_id = int(message.text.split("#")[1])
-        task = await db.get_task_by_id(task_id)
-        if task and task['user_id'] == message.from_user.id:
-            await db.complete_task(task_id, message.from_user.id, completed=True)
-            await message.answer("✅ Выполнено!", reply_markup=get_main_menu())
-        else:
-            await message.answer("❌ Задача не найдена.")
-
-async def handle_postpone(message: types.Message):
-    if "⏰ Отложить #" in message.text:
-        task_id = int(message.text.split("#")[1])
-        task = await db.get_task_by_id(task_id)
-        if task and task['user_id'] == message.from_user.id:
-            await db.postpone_task(task_id, 60)
-            await message.answer("⏰ Напомню через час.", reply_markup=get_main_menu())
-
-async def handle_cancel(message: types.Message):
-    if "❌ Отменить #" in message.text:
-        task_id = int(message.text.split("#")[1])
-        task = await db.get_task_by_id(task_id)
-        if task and task['user_id'] == message.from_user.id:
-            await db.complete_task(task_id, message.from_user.id, cancelled=True)
-            await message.answer("❌ Отменено.", reply_markup=get_main_menu())
-
-# ========== РУТИНЫ ==========
 async def add_routine_start(message: types.Message, state: FSMContext):
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add("🏃 Пробежка","🧘 Медитация","📚 Чтение","💪 Тренировка","✍️ Дневник","➕ Своя","⬅️ Назад")
@@ -365,7 +388,6 @@ async def my_routines(message: types.Message, state: FSMContext):
         await message.answer(text, parse_mode="Markdown")
     await plans_menu(message, state)
 
-# ========== НАПОМИНАНИЯ (дела + опросы с кнопками) ==========
 async def check_reminders():
     from bot import bot
     now_utc = datetime.utcnow()
@@ -383,9 +405,8 @@ async def check_reminders():
             logging.error(f"Ошибка отправки напоминания: {e}")
 
 async def check_all_reminders():
-    """Расширенная версия: опросы с кнопками, рутины с кнопками"""
+    from bot import bot
     try:
-        from bot import bot
         now_utc = datetime.utcnow()
         async with db.pool.acquire() as conn:
             users = await conn.fetch("SELECT DISTINCT user_id FROM users")
@@ -397,7 +418,6 @@ async def check_all_reminders():
             today_str = user_time.strftime("%Y-%m-%d")
             today_date = user_time.date()
 
-            # Сон с кнопками
             sleep_set = await db.get_reminder_setting(user_id, "sleep")
             if sleep_set["enabled"] and sleep_set["times"] and sleep_set["times"][0] == current_time:
                 if not await db.has_sleep_today(user_id):
@@ -405,7 +425,6 @@ async def check_all_reminders():
                     kb.add(KeyboardButton("✅ Пройти сон"), KeyboardButton("⏰ Напомнить позже"))
                     await bot.send_message(user_id, "🛌 Пора записать сон", reply_markup=kb)
 
-            # Чекин с кнопками
             check_set = await db.get_reminder_setting(user_id, "checkins")
             if check_set["enabled"] and current_time in check_set["times"]:
                 checkins = await db._load_json(user_id, "checkins.json")
@@ -414,7 +433,6 @@ async def check_all_reminders():
                     kb.add(KeyboardButton("✅ Пройти чекин"), KeyboardButton("⏰ Напомнить позже"))
                     await bot.send_message(user_id, "⚡️ Время для чек-ина", reply_markup=kb)
 
-            # Итог дня с кнопками
             summary_set = await db.get_reminder_setting(user_id, "summary")
             if summary_set["enabled"] and summary_set["times"] and summary_set["times"][0] == current_time:
                 target_date = await db.get_target_date_for_summary(user_id)
@@ -423,7 +441,6 @@ async def check_all_reminders():
                     kb.add(KeyboardButton("✅ Пройти итог"), KeyboardButton("⏰ Напомнить позже"))
                     await bot.send_message(user_id, "📝 Подведи итог дня", reply_markup=kb)
 
-            # Вода и еда (без кнопок)
             water_set = await db.get_reminder_setting(user_id, "water")
             if water_set["enabled"] and current_time in water_set["times"]:
                 await bot.send_message(user_id, "💧 Не забывай пить воду!")
@@ -432,7 +449,6 @@ async def check_all_reminders():
             if meals_set["enabled"] and current_time in meals_set["times"]:
                 await bot.send_message(user_id, "🍽 Пора поесть!")
 
-            # Рутины (с кнопками)
             routines = await db.get_recurring_tasks_by_user(user_id)
             for r in routines:
                 if await should_run_today(r, today_date):
@@ -456,43 +472,6 @@ async def check_all_reminders():
     except Exception as e:
         logging.error(f"Ошибка в check_all_reminders: {e}", exc_info=True)
 
-# Обработчики кнопок опросов
-async def start_sleep_from_reminder(message: types.Message, state: FSMContext):
-    await sleep_start(message, state)
-
-async def start_checkin_from_reminder(message: types.Message, state: FSMContext):
-    await checkin_start(message, state)
-
-async def start_summary_from_reminder(message: types.Message, state: FSMContext):
-    await day_summary_start(message, state)
-
-async def postpone_reminder(message: types.Message):
-    await message.answer("⏰ Напомню позже.", reply_markup=get_main_menu())
-
-# Обработчики кнопок рутин
-async def handle_routine_done(message: types.Message):
-    if "✅ Выполнена #" in message.text:
-        task_id = int(message.text.split("#")[1])
-        task = await db.get_task_by_id(task_id)
-        if task and task['user_id'] == message.from_user.id:
-            async with db.pool.acquire() as conn:
-                await conn.execute("INSERT INTO task_logs (task_id, user_id, due_date, completed, completed_at) VALUES ($1,$2,CURRENT_DATE,TRUE,NOW())", task_id, message.from_user.id)
-            await message.answer("✅ Рутина выполнена!", reply_markup=get_main_menu())
-
-async def handle_routine_snooze(message: types.Message):
-    if "⏰ Позже #" in message.text:
-        await message.answer("⏰ Напомню позже.", reply_markup=get_main_menu())
-
-async def handle_routine_skip(message: types.Message):
-    if "❌ Пропустить #" in message.text:
-        task_id = int(message.text.split("#")[1])
-        task = await db.get_task_by_id(task_id)
-        if task and task['user_id'] == message.from_user.id:
-            async with db.pool.acquire() as conn:
-                await conn.execute("INSERT INTO task_logs (task_id, user_id, due_date, skipped, completed_at) VALUES ($1,$2,CURRENT_DATE,TRUE,NOW())", task_id, message.from_user.id)
-            await message.answer("❌ Рутина пропущена.", reply_markup=get_main_menu())
-
-# ========== УТРЕННЕЕ ПРИВЕТСТВИЕ ==========
 async def morning_greeting():
     from bot import bot
     try:
@@ -528,7 +507,6 @@ async def morning_greeting():
     except Exception as e:
         logging.error(f"morning_greeting: {e}")
 
-# ========== ВОПРОС ДНЯ ==========
 async def daily_question():
     from bot import bot
     try:
@@ -565,7 +543,6 @@ async def answer_daily_question_save(message: types.Message, state: FSMContext):
 async def skip_daily_question(message: types.Message):
     await message.answer("☕️ Хорошо, в следующий раз!", reply_markup=get_main_menu())
 
-# ========== ВСПОМОГАТЕЛЬНЫЕ ==========
 async def should_run_today(routine, today_date):
     rt = routine['recurrence_type']
     if rt == 'daily': return True
@@ -577,10 +554,12 @@ async def plans_menu(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("📅 Планы", reply_markup=get_plans_menu())
 
-# ========== РЕГИСТРАЦИЯ ==========
+# ------------------------------------------------------------
+# РЕГИСТРАЦИЯ
+# ------------------------------------------------------------
 def register(dp: Dispatcher):
-    dp.register_message_handler(plans_menu, text="📅 Планы", state="*")
     dp.register_message_handler(today_view, text="📋 Сегодня", state="*")
+    dp.register_message_handler(plans_menu, text="📅 Планы", state="*")
     dp.register_message_handler(quick_sleep_start, text="✅ Записать сон", state="*")
     dp.register_message_handler(quick_checkin_start, text="⚡ Быстрый чекин", state="*")
     dp.register_message_handler(add_task_start, text="➕ Добавить дело", state="*")
@@ -601,20 +580,9 @@ def register(dp: Dispatcher):
     dp.register_message_handler(add_routine_time, state=AddRoutineStates.time)
     dp.register_message_handler(add_routine_period, state=AddRoutineStates.period)
 
-    dp.register_message_handler(handle_complete, lambda m: m.text and "✅ Выполнить #" in m.text, state="*")
-    dp.register_message_handler(handle_postpone, lambda m: m.text and "⏰ Отложить #" in m.text, state="*")
-    dp.register_message_handler(handle_cancel, lambda m: m.text and "❌ Отменить #" in m.text, state="*")
-
-    # Обработчики опросов с кнопками
-    dp.register_message_handler(start_sleep_from_reminder, text="✅ Пройти сон", state="*")
-    dp.register_message_handler(start_checkin_from_reminder, text="✅ Пройти чекин", state="*")
-    dp.register_message_handler(start_summary_from_reminder, text="✅ Пройти итог", state="*")
-    dp.register_message_handler(postpone_reminder, text="⏰ Напомнить позже", state="*")
-
-    # Рутины
-    dp.register_message_handler(handle_routine_done, lambda m: m.text and "✅ Выполнена #" in m.text, state="*")
-    dp.register_message_handler(handle_routine_snooze, lambda m: m.text and "⏰ Позже #" in m.text, state="*")
-    dp.register_message_handler(handle_routine_skip, lambda m: m.text and "❌ Пропустить #" in m.text, state="*")
+    dp.register_message_handler(complete_item_start, lambda m: m.text and m.text.startswith("✅ "), state="*")
+    dp.register_message_handler(complete_item_confirm, text="✅ Да, выполнено", state="*")
+    dp.register_message_handler(undo_last_action, text="↩️ Отменить", state="*")
 
     dp.register_message_handler(answer_daily_question_start, text="📝 Ответить", state="*")
     dp.register_message_handler(skip_daily_question, text="❌ Пропустить", state="*")
