@@ -56,7 +56,7 @@ class AIAdvisor:
             tz = await db.get_user_timezone(user_id) or 3
             now_local = datetime.utcnow() + timedelta(hours=tz)
             today_str = now_local.strftime("%Y-%m-%d")
-            today_date = now_local.date()  # <-- объект date
+            today_date = now_local.date()
 
             async with db.pool.acquire() as conn:
                 sleep = await conn.fetchrow("SELECT bed_time, wake_time, quality FROM sleep WHERE user_id = $1 AND date = $2", user_id, today_str)
@@ -74,7 +74,6 @@ class AIAdvisor:
                 checkin_rows = await conn.fetch("SELECT energy, stress, emotions FROM checkins WHERE user_id = $1 ORDER BY date DESC LIMIT 3", user_id)
                 ctx['checkin_rows'] = [dict(r) for r in checkin_rows]
 
-                # ИСПРАВЛЕНИЕ: используем today_date (объект date) вместо строки
                 tasks = await conn.fetch("""
                     SELECT title FROM tasks WHERE user_id = $1 AND task_type = 'once' AND start_date = $2
                 """, user_id, today_date)
