@@ -1,11 +1,20 @@
 from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton   # ← ОБЯЗАТЕЛЬНО
 from database import db
 from states import FoodDrinkStates, FoodStates, DrinkStates
 from keyboards import get_main_menu
 from utils import edit_or_send, delete_dialog_message, send_temp_message, safe_finish
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from plugins.achievements import track_action
+
+# Добавляем recipe в FoodStates, если его там нет
+if not hasattr(FoodStates, 'recipe'):
+    FoodStates.recipe = FoodStates.all()[-1] + 1  # или проще: from aiogram.dispatcher.filters.state import State; FoodStates.recipe = State()
+
+# Но лучше просто прописать в states.py, а здесь используем. Пока костыль:
+from aiogram.dispatcher.filters.state import State
+if not hasattr(FoodStates, 'recipe'):
+    FoodStates.recipe = State()
 
 async def food_drink_menu(message: types.Message):
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
@@ -51,8 +60,7 @@ async def view_food_drink_today(message: types.Message):
     await message.answer(text, parse_mode="Markdown", reply_markup=get_main_menu())
 
 async def recipe_start(message: types.Message, state: FSMContext):
-    await message.answer("Напиши, какие продукты есть (через запятую):",
-                        reply_markup=ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton("⬅️ Назад")))
+    await message.answer("Напиши, какие продукты есть (через запятую):", reply_markup=ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton("⬅️ Назад")))
     await FoodStates.recipe.set()
 
 async def recipe_get(message: types.Message, state: FSMContext):
@@ -63,8 +71,7 @@ async def recipe_get(message: types.Message, state: FSMContext):
     ingredients = message.text
     user_id = message.from_user.id
     from ai_advisor import ai_advisor
-    advice = await ai_advisor.get_advice(user_id,
-        f"У пользователя есть: {ingredients}. Предложи 3 простых рецепта с этими продуктами. Пиши коротко: название и ингредиенты.") if ai_advisor else None
+    advice = await ai_advisor.get_advice(user_id, f"У пользователя есть: {ingredients}. Предложи 3 простых рецепта с этими продуктами. Пиши коротко: название и ингредиенты.") if ai_advisor else None
     await state.finish()
     if advice:
         await message.answer(f"👨‍🍳 *Рецепты:*\n\n{advice}", parse_mode="Markdown")
@@ -78,9 +85,7 @@ async def food_meal_type(message: types.Message, state: FSMContext):
         return
     await state.update_data(meal_type=message.text)
     await FoodStates.next()
-    await edit_or_send(state, message.chat.id, "Что съел?",
-                       ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton("⬅️ Назад")),
-                       edit=True)
+    await edit_or_send(state, message.chat.id, "Что съел?", ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton("⬅️ Назад")), edit=True)
 
 async def food_text(message: types.Message, state: FSMContext):
     if message.text in ("⬅️ Назад", "❌ Отмена"):
@@ -110,9 +115,7 @@ async def drink_amount(message: types.Message, state: FSMContext):
         return
     if message.text == "Другое":
         await state.update_data(awaiting_custom_drink_amount=True)
-        await edit_or_send(state, message.chat.id, "✏️ Введи количество:",
-                           ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton("⬅️ Назад")),
-                           edit=True)
+        await edit_or_send(state, message.chat.id, "✏️ Введи количество:", ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton("⬅️ Назад")), edit=True)
         return
     data = await state.get_data()
     if data.get("awaiting_custom_drink_amount"):
