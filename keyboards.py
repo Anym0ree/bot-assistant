@@ -97,6 +97,20 @@ def get_settings_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
+# Недостающие функции для совместимости
+def get_timezone_buttons():
+    buttons = [
+        [KeyboardButton("Москва (UTC+3)"), KeyboardButton("Санкт-Петербург (UTC+3)")],
+        [KeyboardButton("Екатеринбург (UTC+5)"), KeyboardButton("Новосибирск (UTC+7)")],
+        [KeyboardButton("Владивосток (UTC+10)"), KeyboardButton("Калининград (UTC+2)")],
+        [KeyboardButton("Другое")],
+        [KeyboardButton("⬅️ Назад")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+def get_back_button():
+    return ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton("⬅️ Назад"))
+
 def get_planner_keyboard():
     return get_plans_menu()
 
