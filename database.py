@@ -1,7 +1,7 @@
 import json
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import asyncpg
 from config import DATABASE_URL
 
@@ -39,7 +39,6 @@ class Database:
                     city TEXT
                 )
             ''')
-            # Добавляем недостающие колонки, если их нет
             await conn.execute('''
                 DO $$
                 BEGIN
@@ -255,7 +254,6 @@ class Database:
                     PRIMARY KEY (user_id, achievement_code)
                 )
             ''')
-            # Вставляем базовые достижения, если их нет
             await conn.execute('''
                 INSERT INTO achievements (code, name, description, icon) VALUES
                 ('first_sleep', 'Первый сон', 'Записать 1 сон', '🌙'),
@@ -596,7 +594,6 @@ class Database:
 
     # ---------- МЕТОДЫ ДЛЯ НОВОГО ПЛАНИРОВЩИКА ----------
     async def get_last_checkin(self, user_id: int, date_str: str):
-        """Последний чекин за указанную дату (словарь или None)"""
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT energy, stress, emotions FROM checkins WHERE user_id = $1 AND date = $2 ORDER BY time DESC LIMIT 1",
@@ -605,7 +602,6 @@ class Database:
             return dict(row) if row else None
 
     async def find_task_by_title(self, user_id: int, title: str):
-        """Ищет активную задачу по названию"""
         async with self.pool.acquire() as conn:
             return await conn.fetchrow(
                 "SELECT id, title, is_active FROM tasks WHERE user_id = $1 AND title = $2 AND task_type = 'once' AND is_active = TRUE LIMIT 1",
@@ -613,7 +609,6 @@ class Database:
             )
 
     async def find_routine_by_title(self, user_id: int, title: str):
-        """Ищет активную рутину по названию"""
         async with self.pool.acquire() as conn:
             return await conn.fetchrow(
                 "SELECT id, title FROM tasks WHERE user_id = $1 AND title = $2 AND task_type = 'recurring' AND is_active = TRUE LIMIT 1",
@@ -621,17 +616,21 @@ class Database:
             )
 
     async def was_routine_completed_today(self, task_id: int, date_str: str) -> bool:
-        """Проверяет, выполнена ли рутина сегодня"""
+        # конвертируем строку в объект date, если нужно
+        if isinstance(date_str, str):
+            d = datetime.strptime(date_str, "%Y-%m-%d").date()
+        else:
+            d = date_str
         async with self.pool.acquire() as conn:
             row = await conn.fetchval(
                 "SELECT 1 FROM task_logs WHERE task_id = $1 AND due_date = $2 AND completed = TRUE",
-                task_id, date_str
+                task_id, d
             )
             return row is not None
 
     async def complete_routine(self, task_id: int, user_id: int):
-        """Отмечает рутину выполненной сегодня"""
-        today = await self.get_user_local_date(user_id)
+        today_str = await self.get_user_local_date(user_id)
+        today = datetime.strptime(today_str, "%Y-%m-%d").date()
         async with self.pool.acquire() as conn:
             await conn.execute(
                 "INSERT INTO task_logs (task_id, user_id, due_date, completed, completed_at) VALUES ($1, $2, $3, TRUE, NOW())",
@@ -639,14 +638,13 @@ class Database:
             )
 
     async def undo_complete_task(self, task_id: int, user_id: int):
-        """Отменяет завершение задачи (возвращает is_active=True и удаляет лог)"""
         async with self.pool.acquire() as conn:
             await conn.execute("UPDATE tasks SET is_active = TRUE WHERE id = $1 AND user_id = $2", task_id, user_id)
             await conn.execute("DELETE FROM task_logs WHERE task_id = $1 AND user_id = $2 AND completed = TRUE", task_id, user_id)
 
     async def undo_complete_routine(self, task_id: int, user_id: int):
-        """Отменяет выполнение рутины (удаляет лог за сегодня)"""
-        today = await self.get_user_local_date(user_id)
+        today_str = await self.get_user_local_date(user_id)
+        today = datetime.strptime(today_str, "%Y-%m-%d").date()
         async with self.pool.acquire() as conn:
             await conn.execute(
                 "DELETE FROM task_logs WHERE task_id = $1 AND user_id = $2 AND due_date = $3 AND completed = TRUE",
