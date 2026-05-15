@@ -97,7 +97,6 @@ def get_settings_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
-# Недостающие функции для совместимости
 def get_timezone_buttons():
     buttons = [
         [KeyboardButton("Москва (UTC+3)"), KeyboardButton("Санкт-Петербург (UTC+3)")],
