@@ -651,4 +651,54 @@ async def undo_complete_routine(self, task_id: int, user_id: int):
             "DELETE FROM task_logs WHERE task_id = $1 AND user_id = $2 AND due_date = $3 AND completed = TRUE",
             task_id, user_id, today
         )
+async def get_last_checkin(self, user_id: int, date_str: str):
+    async with self.pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT energy, stress, emotions FROM checkins WHERE user_id = $1 AND date = $2 ORDER BY time DESC LIMIT 1",
+            user_id, date_str
+        )
+        return dict(row) if row else None
+
+async def find_task_by_title(self, user_id: int, title: str):
+    async with self.pool.acquire() as conn:
+        return await conn.fetchrow(
+            "SELECT id, title, is_active FROM tasks WHERE user_id = $1 AND title = $2 AND task_type = 'once' AND is_active = TRUE LIMIT 1",
+            user_id, title
+        )
+
+async def find_routine_by_title(self, user_id: int, title: str):
+    async with self.pool.acquire() as conn:
+        return await conn.fetchrow(
+            "SELECT id, title FROM tasks WHERE user_id = $1 AND title = $2 AND task_type = 'recurring' AND is_active = TRUE LIMIT 1",
+            user_id, title
+        )
+
+async def was_routine_completed_today(self, task_id: int, date_str: str) -> bool:
+    async with self.pool.acquire() as conn:
+        row = await conn.fetchval(
+            "SELECT 1 FROM task_logs WHERE task_id = $1 AND due_date = $2 AND completed = TRUE",
+            task_id, date_str
+        )
+        return row is not None
+
+async def complete_routine(self, task_id: int, user_id: int):
+    today = await self.get_user_local_date(user_id)
+    async with self.pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO task_logs (task_id, user_id, due_date, completed, completed_at) VALUES ($1, $2, $3, TRUE, NOW())",
+            task_id, user_id, today
+        )
+
+async def undo_complete_task(self, task_id: int, user_id: int):
+    async with self.pool.acquire() as conn:
+        await conn.execute("UPDATE tasks SET is_active = TRUE WHERE id = $1 AND user_id = $2", task_id, user_id)
+        await conn.execute("DELETE FROM task_logs WHERE task_id = $1 AND user_id = $2 AND completed = TRUE", task_id, user_id)
+
+async def undo_complete_routine(self, task_id: int, user_id: int):
+    today = await self.get_user_local_date(user_id)
+    async with self.pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM task_logs WHERE task_id = $1 AND user_id = $2 AND due_date = $3 AND completed = TRUE",
+            task_id, user_id, today
+        )
 db = Database()
