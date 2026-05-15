@@ -36,7 +36,7 @@ class DailyQuestionStates(StatesGroup):
     answer = State()
 
 # -----------------------------------------------------------
-# 📋 НОВЫЙ ДАШБОРД «СЕГОДНЯ» (всё в одном сообщении)
+# 📋 ДАШБОРД «СЕГОДНЯ»
 # -----------------------------------------------------------
 async def today_view(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -108,7 +108,6 @@ async def today_view(message: types.Message, state: FSMContext):
         text += "\n📌 *Задачи и рутины:*\n"
         for item in active_items:
             text += f"  • {item['title']}\n"
-        # Кнопки для завершения добавляем в ту же клавиатуру
         for item in active_items:
             quick_kb.add(KeyboardButton(f"✅ {item['title'][:30]}"))
     else:
@@ -497,7 +496,7 @@ async def morning_greeting():
             user_id = user['user_id']
             tz = await db.get_user_timezone(user_id) or 3
             now_local = datetime.utcnow() + timedelta(hours=tz)
-            if now_local.hour != 8: continue
+            if now_local.hour != 8 or now_local.minute > 5: continue
             greeting = f"☀️ Доброе утро"
             from plugins.weather import get_weather_by_city, get_weather_by_coords
             async with db.pool.acquire() as conn:
@@ -517,7 +516,10 @@ async def morning_greeting():
                     ctx = f"Погода: {weather_text}. Планы: {plans}"
                     advice = await ai_advisor.ai_advisor.get_advice(user_id, f"Дай короткое утреннее пожелание и совет на день, исходя из погоды и планов: {ctx}", history=None)
                     advice = f"💡 *Совет:* {advice[:200]}"
-                except: pass
+                except:
+                    advice = "💡 *Совет:* Сегодня хороший день, чтобы сделать первый шаг к цели."
+            else:
+                advice = "💡 *Совет:* Не забудь записать сон и чекин, это помогает держать фокус."
             msg = f"{greeting}!\n\n{weather_text}\n\n📌 *Сегодня:*\n{plans}\n\n{advice}\n\nХорошего дня! ❤️"
             await bot.send_message(user_id, msg, parse_mode="Markdown")
     except Exception as e:
@@ -535,7 +537,7 @@ async def daily_question():
             user_id = user['user_id']
             tz = await db.get_user_timezone(user_id) or 3
             now_local = datetime.utcnow() + timedelta(hours=tz)
-            if now_local.hour != 10: continue
+            if now_local.hour != 10 or now_local.minute > 5: continue
             question = "Что сегодня принесло тебе радость?"
             if ai_advisor.ai_advisor:
                 try:
@@ -577,6 +579,28 @@ async def plans_menu(message: types.Message, state: FSMContext):
     await message.answer("📅 Планы", reply_markup=get_plans_menu())
 
 # -----------------------------------------------------------
+# ОБРАБОТЧИКИ СТАРЫХ КНОПОК РУТИН
+# -----------------------------------------------------------
+async def handle_routine_done(message: types.Message):
+    if "✅ Выполнена #" in message.text:
+        task_id = int(message.text.split("#")[1])
+        task = await db.get_task_by_id(task_id)
+        if task and task['user_id'] == message.from_user.id:
+            await db.complete_routine(task_id, message.from_user.id)
+            await message.answer("✅ Рутина выполнена!", reply_markup=get_main_menu())
+
+async def handle_routine_snooze(message: types.Message):
+    if "⏰ Позже #" in message.text:
+        await message.answer("⏰ Напомню позже.", reply_markup=get_main_menu())
+
+async def handle_routine_skip(message: types.Message):
+    if "❌ Пропустить #" in message.text:
+        task_id = int(message.text.split("#")[1])
+        task = await db.get_task_by_id(task_id)
+        if task and task['user_id'] == message.from_user.id:
+            await message.answer("❌ Рутина пропущена.", reply_markup=get_main_menu())
+
+# -----------------------------------------------------------
 # РЕГИСТРАЦИЯ
 # -----------------------------------------------------------
 def register(dp: Dispatcher):
@@ -613,3 +637,7 @@ def register(dp: Dispatcher):
     dp.register_message_handler(answer_daily_question_start, text="📝 Ответить", state="*")
     dp.register_message_handler(skip_daily_question, text="❌ Пропустить", state="*")
     dp.register_message_handler(answer_daily_question_save, state=DailyQuestionStates.answer)
+
+    dp.register_message_handler(handle_routine_done, lambda m: m.text and "✅ Выполнена #" in m.text, state="*")
+    dp.register_message_handler(handle_routine_snooze, lambda m: m.text and "⏰ Позже #" in m.text, state="*")
+    dp.register_message_handler(handle_routine_skip, lambda m: m.text and "❌ Пропустить #" in m.text, state="*")
