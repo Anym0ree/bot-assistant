@@ -116,27 +116,37 @@ async def today_view(message: types.Message, state: FSMContext):
     await message.answer(text, reply_markup=quick_kb, parse_mode="Markdown")
 
 # -----------------------------------------------------------
-# ПОДТВЕРЖДЕНИЕ И ОТМЕНА
+# ПОДТВЕРЖДЕНИЕ (исправленный поиск по началу названия)
 # -----------------------------------------------------------
 async def complete_item_start(message: types.Message, state: FSMContext):
     if not message.text.startswith("✅ "):
         return
-    title = message.text[2:].strip()
+    title_fragment = message.text[2:].strip()
     user_id = message.from_user.id
-    task = await db.find_task_by_title(user_id, title)
-    if task:
-        await state.update_data(completing_item={"id": task['id'], "type": "task", "title": title})
-        kb = ReplyKeyboardMarkup(resize_keyboard=True)
-        kb.add(KeyboardButton("✅ Да, выполнено"), KeyboardButton("↩️ Отмена"))
-        await message.answer(f"«{title}» — выполнено?", reply_markup=kb)
-        return
-    routine = await db.find_routine_by_title(user_id, title)
-    if routine:
-        await state.update_data(completing_item={"id": routine['id'], "type": "routine", "title": title})
-        kb = ReplyKeyboardMarkup(resize_keyboard=True)
-        kb.add(KeyboardButton("✅ Да, выполнено"), KeyboardButton("↩️ Отмена"))
-        await message.answer(f"«{title}» — выполнено?", reply_markup=kb)
-        return
+
+    async with db.pool.acquire() as conn:
+        task = await conn.fetchrow(
+            "SELECT id, title FROM tasks WHERE user_id = $1 AND title LIKE $2 AND task_type = 'once' AND is_active = TRUE LIMIT 1",
+            user_id, f"{title_fragment}%"
+        )
+        if task:
+            await state.update_data(completing_item={"id": task['id'], "type": "task", "title": task['title']})
+            kb = ReplyKeyboardMarkup(resize_keyboard=True)
+            kb.add(KeyboardButton("✅ Да, выполнено"), KeyboardButton("↩️ Отмена"))
+            await message.answer(f"«{task['title']}» — выполнено?", reply_markup=kb)
+            return
+
+        routine = await conn.fetchrow(
+            "SELECT id, title FROM tasks WHERE user_id = $1 AND title LIKE $2 AND task_type = 'recurring' AND is_active = TRUE LIMIT 1",
+            user_id, f"{title_fragment}%"
+        )
+        if routine:
+            await state.update_data(completing_item={"id": routine['id'], "type": "routine", "title": routine['title']})
+            kb = ReplyKeyboardMarkup(resize_keyboard=True)
+            kb.add(KeyboardButton("✅ Да, выполнено"), KeyboardButton("↩️ Отмена"))
+            await message.answer(f"«{routine['title']}» — выполнено?", reply_markup=kb)
+            return
+
     await message.answer("❌ Не найдено.")
 
 async def complete_item_confirm(message: types.Message, state: FSMContext):
