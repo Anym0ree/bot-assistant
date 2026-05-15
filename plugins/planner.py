@@ -35,9 +35,9 @@ class QuickCheckinStates(StatesGroup):
 class DailyQuestionStates(StatesGroup):
     answer = State()
 
-# ------------------------------------------------------------
-# 📋 НОВЫЙ ДАШБОРД «СЕГОДНЯ»
-# ------------------------------------------------------------
+# -----------------------------------------------------------
+# 📋 НОВЫЙ ДАШБОРД «СЕГОДНЯ» (всё в одном сообщении)
+# -----------------------------------------------------------
 async def today_view(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     tz = await db.get_user_timezone(user_id) or 3
@@ -87,9 +87,9 @@ async def today_view(message: types.Message, state: FSMContext):
         text += "🌤️ *Погода:* укажи город в настройках\n"
 
     # Быстрые действия
-    quick_kb = ReplyKeyboardMarkup(resize_keyboard=True, row_width=4)
-    quick_kb.add(KeyboardButton("🛌 Сон"), KeyboardButton("⚡ Чекин"), KeyboardButton("🍽 Еда"), KeyboardButton("📝 Итог"))
-    await message.answer(text, reply_markup=quick_kb, parse_mode="Markdown")
+    quick_kb = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    quick_kb.add(KeyboardButton("✅ Записать сон"), KeyboardButton("⚡ Быстрый чекин"))
+    quick_kb.add(KeyboardButton("🍽🥤 Еда и напитки"), KeyboardButton("📝 Итог дня"))
 
     # Задачи и рутины
     tasks = await db.get_upcoming_tasks(user_id)
@@ -105,19 +105,20 @@ async def today_view(message: types.Message, state: FSMContext):
                 active_items.append({"title": r['title'], "id": r['id'], "type": "routine"})
 
     if active_items:
-        items_text = "\n📌 *Задачи и рутины:*\n"
-        items_kb = ReplyKeyboardMarkup(resize_keyboard=True)
+        text += "\n📌 *Задачи и рутины:*\n"
         for item in active_items:
-            items_text += f"  • {item['title']}\n"
-            items_kb.add(KeyboardButton(f"✅ {item['title'][:30]}"))
-        items_text += "\nДля завершения нажми на кнопку ниже."
-        await message.answer(items_text, reply_markup=items_kb, parse_mode="Markdown")
+            text += f"  • {item['title']}\n"
+        # Кнопки для завершения добавляем в ту же клавиатуру
+        for item in active_items:
+            quick_kb.add(KeyboardButton(f"✅ {item['title'][:30]}"))
     else:
-        await message.answer("📌 *На сегодня ничего не запланировано.*", parse_mode="Markdown")
+        text += "📌 *На сегодня ничего не запланировано.*"
 
-# ------------------------------------------------------------
+    await message.answer(text, reply_markup=quick_kb, parse_mode="Markdown")
+
+# -----------------------------------------------------------
 # ПОДТВЕРЖДЕНИЕ И ОТМЕНА
-# ------------------------------------------------------------
+# -----------------------------------------------------------
 async def complete_item_start(message: types.Message, state: FSMContext):
     if not message.text.startswith("✅ "):
         return
@@ -192,9 +193,9 @@ async def undo_last_action(message: types.Message):
     del undo_data[user_id]
     await message.answer("Главное меню", reply_markup=get_main_menu())
 
-# ------------------------------------------------------------
-# ОСТАЛЬНЫЕ ФУНКЦИИ (быстрые действия, дела, рутины, уведомления, утро, вопрос дня)
-# ------------------------------------------------------------
+# -----------------------------------------------------------
+# БЫСТРЫЙ СОН
+# -----------------------------------------------------------
 async def quick_sleep_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     async with db.pool.acquire() as conn:
@@ -241,6 +242,9 @@ async def quick_sleep_wake(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("✅ Сон записан!", reply_markup=get_main_menu())
 
+# -----------------------------------------------------------
+# БЫСТРЫЙ ЧЕКИН
+# -----------------------------------------------------------
 async def quick_checkin_start(message: types.Message, state: FSMContext):
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     kb.row(*[KeyboardButton(str(i)) for i in range(1,6)])
@@ -268,6 +272,9 @@ async def quick_checkin_stress(message: types.Message, state: FSMContext):
         await state.finish()
         await message.answer("✅ Чекин записан!", reply_markup=get_main_menu())
 
+# -----------------------------------------------------------
+# ДЕЛА
+# -----------------------------------------------------------
 async def add_task_start(message: types.Message, state: FSMContext):
     await message.answer("Что нужно сделать?")
     await AddTaskStates.title.set()
@@ -338,6 +345,9 @@ async def my_tasks(message: types.Message, state: FSMContext):
     kb.add(KeyboardButton("⬅️ Назад"))
     await message.answer(text, reply_markup=kb, parse_mode="Markdown")
 
+# -----------------------------------------------------------
+# РУТИНЫ
+# -----------------------------------------------------------
 async def add_routine_start(message: types.Message, state: FSMContext):
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add("🏃 Пробежка","🧘 Медитация","📚 Чтение","💪 Тренировка","✍️ Дневник","➕ Своя","⬅️ Назад")
@@ -388,6 +398,9 @@ async def my_routines(message: types.Message, state: FSMContext):
         await message.answer(text, parse_mode="Markdown")
     await plans_menu(message, state)
 
+# -----------------------------------------------------------
+# НАПОМИНАНИЯ
+# -----------------------------------------------------------
 async def check_reminders():
     from bot import bot
     now_utc = datetime.utcnow()
@@ -472,6 +485,9 @@ async def check_all_reminders():
     except Exception as e:
         logging.error(f"Ошибка в check_all_reminders: {e}", exc_info=True)
 
+# -----------------------------------------------------------
+# УТРЕННЕЕ ПРИВЕТСТВИЕ
+# -----------------------------------------------------------
 async def morning_greeting():
     from bot import bot
     try:
@@ -507,6 +523,9 @@ async def morning_greeting():
     except Exception as e:
         logging.error(f"morning_greeting: {e}")
 
+# -----------------------------------------------------------
+# ВОПРОС ДНЯ
+# -----------------------------------------------------------
 async def daily_question():
     from bot import bot
     try:
@@ -543,6 +562,9 @@ async def answer_daily_question_save(message: types.Message, state: FSMContext):
 async def skip_daily_question(message: types.Message):
     await message.answer("☕️ Хорошо, в следующий раз!", reply_markup=get_main_menu())
 
+# -----------------------------------------------------------
+# ВСПОМОГАТЕЛЬНЫЕ
+# -----------------------------------------------------------
 async def should_run_today(routine, today_date):
     rt = routine['recurrence_type']
     if rt == 'daily': return True
@@ -554,14 +576,18 @@ async def plans_menu(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("📅 Планы", reply_markup=get_plans_menu())
 
-# ------------------------------------------------------------
+# -----------------------------------------------------------
 # РЕГИСТРАЦИЯ
-# ------------------------------------------------------------
+# -----------------------------------------------------------
 def register(dp: Dispatcher):
     dp.register_message_handler(today_view, text="📋 Сегодня", state="*")
     dp.register_message_handler(plans_menu, text="📅 Планы", state="*")
     dp.register_message_handler(quick_sleep_start, text="✅ Записать сон", state="*")
     dp.register_message_handler(quick_checkin_start, text="⚡ Быстрый чекин", state="*")
+    from plugins.food_drinks import food_drink_menu
+    dp.register_message_handler(food_drink_menu, text="🍽🥤 Еда и напитки", state="*")
+    from plugins.day_summary import day_summary_start
+    dp.register_message_handler(day_summary_start, text="📝 Итог дня", state="*")
     dp.register_message_handler(add_task_start, text="➕ Добавить дело", state="*")
     dp.register_message_handler(add_task_start, text="➕ Дело", state="*")
     dp.register_message_handler(my_tasks, text="🗓️ Мои дела", state="*")
