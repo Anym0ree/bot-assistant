@@ -1,130 +1,108 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 def get_main_menu():
-    """Главное меню бота — минималистичное, без дубликатов"""
     buttons = [
-        [KeyboardButton(text="📋 Сегодня")],
-        [KeyboardButton(text="📝 Записать")],
-        [KeyboardButton(text="📅 Планы")],
-        [KeyboardButton(text="📂 Заметки")],
-        [KeyboardButton(text="📅 История")],
-        [KeyboardButton(text="🌤️ Погода")],
-        [KeyboardButton(text="☕️ Вопрос дня")],
-        [KeyboardButton(text="🎤 Конвертер")],
-        [KeyboardButton(text="🤖 AI-совет")],
-        [KeyboardButton(text="🏆 Достижения")],
-        [KeyboardButton(text="🆘 Срыв")],          # <-- новая кнопка
-        [KeyboardButton(text="📤 Экспорт")],
-        [KeyboardButton(text="⚙️ Настройки")]
+        [KeyboardButton("📋 Сегодня")],
+        [KeyboardButton("📝 Записать")],
+        [KeyboardButton("📅 Планы")],
+        [KeyboardButton("📂 Заметки")],
+        [KeyboardButton("📅 История")],
+        [KeyboardButton("🌤️ Погода")],
+        [KeyboardButton("☕️ Вопрос дня")],
+        [KeyboardButton("🎤 Конвертер")],
+        [KeyboardButton("🤖 AI-совет")],
+        [KeyboardButton("🏆 Достижения")],
+        [KeyboardButton("🆘 Срыв")],
+        [KeyboardButton("📤 Экспорт")],
+        [KeyboardButton("⚙️ Настройки")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
 def get_record_menu():
-    """Меню «Записать» — быстрый доступ к опросам"""
     buttons = [
-        [KeyboardButton(text="🛌 Сон"), KeyboardButton(text="⚡️ Чек-ин")],
-        [KeyboardButton(text="📝 Итог дня"), KeyboardButton(text="😊 Настроение")],
-        [KeyboardButton(text="🍽🥤 Еда и напитки")],
-        [KeyboardButton(text="⬅️ Назад")]
+        [KeyboardButton("🛌 Сон"), KeyboardButton("⚡️ Чек-ин")],
+        [KeyboardButton("📝 Итог дня"), KeyboardButton("😊 Настроение")],
+        [KeyboardButton("🍽🥤 Еда и напитки")],
+        [KeyboardButton("⬅️ Назад")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 def get_plans_menu():
-    """Меню «Планы» — дела, рутины, уведомления, цели"""
     buttons = [
-        [KeyboardButton(text="📋 Сегодня")],
-        [KeyboardButton(text="➕ Добавить дело")],
-        [KeyboardButton(text="🔄 Добавить рутину")],
-        [KeyboardButton(text="🗓️ Мои дела")],
-        [KeyboardButton(text="📋 Мои рутины")],
-        [KeyboardButton(text="⏰ Уведомления")],
-        [KeyboardButton(text="⬅️ Назад")]
+        [KeyboardButton("📋 Сегодня")],
+        [KeyboardButton("➕ Добавить дело")],
+        [KeyboardButton("🔄 Добавить рутину")],
+        [KeyboardButton("🗓️ Мои дела")],
+        [KeyboardButton("📋 Мои рутины")],
+        [KeyboardButton("⏰ Уведомления")],
+        [KeyboardButton("⬅️ Назад")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
-def get_notes_menu():
-    """Меню «Заметки»"""
+def get_notes_main_keyboard():
     buttons = [
-        [KeyboardButton(text="📂 Мои разделы")],
-        [KeyboardButton(text="➕ Новый раздел")],
-        [KeyboardButton(text="⬅️ Назад")]
+        [KeyboardButton("📂 Мои разделы")],
+        [KeyboardButton("➕ Новый раздел")],
+        [KeyboardButton("🗣️ Правда дня")],
+        [KeyboardButton("⬅️ Назад")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 def get_history_menu():
-    """Меню «История»"""
     buttons = [
-        [KeyboardButton(text="📅 Сегодня")],
-        [KeyboardButton(text="📆 Вчера")],
-        [KeyboardButton(text="✏️ Ввести дату")],
-        [KeyboardButton(text="📈 Графики")],
-        [KeyboardButton(text="⬅️ Назад")]
+        [KeyboardButton("📅 Сегодня")],
+        [KeyboardButton("📆 Вчера")],
+        [KeyboardButton("✏️ Ввести дату")],
+        [KeyboardButton("📈 Графики")],
+        [KeyboardButton("⬅️ Назад")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 def get_graph_period_menu():
-    """Меню выбора периода для графиков"""
     buttons = [
-        [KeyboardButton(text="7 дн"), KeyboardButton(text="14 дн")],
-        [KeyboardButton(text="30 дн"), KeyboardButton(text="Свой период")],
-        [KeyboardButton(text="⬅️ Назад")]
+        [KeyboardButton("7 дн"), KeyboardButton("14 дн")],
+        [KeyboardButton("30 дн"), KeyboardButton("Свой период")],
+        [KeyboardButton("⬅️ Назад")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 def get_graph_type_menu():
-    """Меню выбора типа графика"""
     buttons = [
-        [KeyboardButton(text="📈 Сон")],
-        [KeyboardButton(text="📈 Энергия")],
-        [KeyboardButton(text="📈 Настроение")],
-        [KeyboardButton(text="⬅️ Назад")]
+        [KeyboardButton("📈 Сон")],
+        [KeyboardButton("📈 Энергия")],
+        [KeyboardButton("📈 Настроение")],
+        [KeyboardButton("⬅️ Назад")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 def get_converter_menu():
-    """Меню конвертера"""
     buttons = [
-        [KeyboardButton(text="🎤 Голос в текст")],
-        [KeyboardButton(text="🎥 Кружок в GIF")],
-        [KeyboardButton(text="📥 YouTube / SoundCloud")],
-        [KeyboardButton(text="⬅️ Назад")]
+        [KeyboardButton("🎤 Голос в текст")],
+        [KeyboardButton("🎥 Кружок в GIF")],
+        [KeyboardButton("📥 YouTube / SoundCloud")],
+        [KeyboardButton("⬅️ Назад")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 def get_settings_keyboard():
     buttons = [
-        [KeyboardButton(text="🌍 Сменить часовой пояс")],
-        [KeyboardButton(text="🏙️ Указать город")],
-        [KeyboardButton(text="🔔 Настройка напоминаний")],
-        [KeyboardButton(text="✏️ Редактировать профиль")],
-        [KeyboardButton(text="🤖 AI-совет (вкл/выкл)")],
-        [KeyboardButton(text="📊 Еженедельные отчёты (вкл/выкл)")],
-        [KeyboardButton(text="🕒 Тихий час")],
-        [KeyboardButton(text="⬅️ Назад")]
+        [KeyboardButton("🌍 Сменить часовой пояс")],
+        [KeyboardButton("🏙️ Указать город")],
+        [KeyboardButton("🔔 Настройка напоминаний")],
+        [KeyboardButton("✏️ Редактировать профиль")],
+        [KeyboardButton("🤖 AI-совет (вкл/выкл)")],
+        [KeyboardButton("📊 Еженедельные отчёты (вкл/выкл)")],
+        [KeyboardButton("🕒 Тихий час")],
+        [KeyboardButton("⬅️ Назад")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
-# Остальные старые клавиатуры (для совместимости с другими модулями)
 def get_planner_keyboard():
     return get_plans_menu()
 
-def get_notes_main_keyboard():
-    return get_notes_menu()
-
 def get_export_menu():
     buttons = [
-        [KeyboardButton(text="📥 Экспорт всех данных")],
-        [KeyboardButton(text="⬅️ Назад")]
+        [KeyboardButton("📥 Экспорт всех данных")],
+        [KeyboardButton("⬅️ Назад")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
-def get_timezone_buttons():
-    buttons = [
-        [KeyboardButton(text="Москва (UTC+3)"), KeyboardButton(text="Санкт-Петербург (UTC+3)")],
-        [KeyboardButton(text="Екатеринбург (UTC+5)"), KeyboardButton(text="Новосибирск (UTC+7)")],
-        [KeyboardButton(text="Владивосток (UTC+10)"), KeyboardButton(text="Калининград (UTC+2)")],
-        [KeyboardButton(text="Другое")],
-        [KeyboardButton(text="⬅️ Назад")]
-    ]
-    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
-
-def get_back_button():
-    return ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton("⬅️ Назад"))
