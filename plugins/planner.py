@@ -36,7 +36,7 @@ class DailyQuestionStates(StatesGroup):
     answer = State()
 
 # -----------------------------------------------------------
-# 📋 ДАШБОРД «СЕГОДНЯ» (время и кнопки работают)
+# 📋 ДАШБОРД «СЕГОДНЯ» (с ID в кнопках, время в тексте)
 # -----------------------------------------------------------
 async def today_view(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -91,7 +91,7 @@ async def today_view(message: types.Message, state: FSMContext):
     quick_kb.add(KeyboardButton("✅ Записать сон"), KeyboardButton("⚡ Быстрый чекин"))
     quick_kb.add(KeyboardButton("🍽🥤 Еда и напитки"), KeyboardButton("📝 Итог дня"))
 
-    # Задачи и рутины с временем
+    # Задачи и рутины с ID и временем
     tasks = await db.get_upcoming_tasks(user_id)
     routines = await db.get_recurring_tasks_by_user(user_id)
     active_items = []
@@ -127,10 +127,8 @@ async def today_view(message: types.Message, state: FSMContext):
         for item in active_items:
             text += f"  • {item['title']} — {item['time']}\n"
         for item in active_items:
-            # В кнопку добавляем время, если помещается (до 35 символов)
-            btn_text = f"✅ {item['title'][:20]}"
-            if len(btn_text) + len(item['time']) + 3 <= 35:
-                btn_text += f" ({item['time']})"
+            # Кнопка: ✅ Название #ID (без времени, чтобы влезало)
+            btn_text = f"✅ {item['title'][:18]} #{item['id']}"
             quick_kb.add(KeyboardButton(btn_text))
     else:
         text += "📌 *На сегодня ничего не запланировано.*"
@@ -138,40 +136,66 @@ async def today_view(message: types.Message, state: FSMContext):
     await message.answer(text, reply_markup=quick_kb, parse_mode="Markdown")
 
 # -----------------------------------------------------------
-# ПОДТВЕРЖДЕНИЕ (поиск по началу названия – работает)
+# ПОДТВЕРЖДЕНИЕ (надёжный поиск: сначала по ID, потом по названию)
 # -----------------------------------------------------------
 async def complete_item_start(message: types.Message, state: FSMContext):
     if not message.text.startswith("✅ "):
         return
-    title_fragment = message.text[2:].strip()
-    # Убираем возможное время в скобках, если оно было добавлено
-    if " (" in title_fragment:
-        title_fragment = title_fragment.split(" (")[0]
+    text = message.text[2:].strip()
     user_id = message.from_user.id
+    task_id = None
+    routine_id = None
 
-    async with db.pool.acquire() as conn:
-        # Ищем задачу по началу названия
-        task = await conn.fetchrow(
-            "SELECT id, title FROM tasks WHERE user_id = $1 AND title LIKE $2 AND task_type = 'once' AND is_active = TRUE LIMIT 1",
-            user_id, f"{title_fragment}%"
-        )
-        if task:
-            await state.update_data(completing_item={"id": task['id'], "type": "task", "title": task['title']})
-            kb = ReplyKeyboardMarkup(resize_keyboard=True)
-            kb.add(KeyboardButton("✅ Да, выполнено"), KeyboardButton("↩️ Отмена"))
-            await message.answer(f"«{task['title']}» — выполнено?", reply_markup=kb)
-            return
+    # Пытаемся вытащить ID из кнопки (формат "Название #123")
+    if "#" in text:
+        try:
+            task_id = int(text.split("#")[-1])
+        except:
+            pass
 
-        routine = await conn.fetchrow(
-            "SELECT id, title FROM tasks WHERE user_id = $1 AND title LIKE $2 AND task_type = 'recurring' AND is_active = TRUE LIMIT 1",
-            user_id, f"{title_fragment}%"
-        )
-        if routine:
-            await state.update_data(completing_item={"id": routine['id'], "type": "routine", "title": routine['title']})
-            kb = ReplyKeyboardMarkup(resize_keyboard=True)
-            kb.add(KeyboardButton("✅ Да, выполнено"), KeyboardButton("↩️ Отмена"))
-            await message.answer(f"«{routine['title']}» — выполнено?", reply_markup=kb)
-            return
+    if task_id:
+        # Ищем задачу или рутину по ID
+        async with db.pool.acquire() as conn:
+            task = await conn.fetchrow("SELECT id, title FROM tasks WHERE id = $1 AND user_id = $2 AND task_type = 'once' AND is_active = TRUE", task_id, user_id)
+            if task:
+                await state.update_data(completing_item={"id": task['id'], "type": "task", "title": task['title']})
+                kb = ReplyKeyboardMarkup(resize_keyboard=True)
+                kb.add(KeyboardButton("✅ Да, выполнено"), KeyboardButton("↩️ Отмена"))
+                await message.answer(f"«{task['title']}» — выполнено?", reply_markup=kb)
+                return
+            routine = await conn.fetchrow("SELECT id, title FROM tasks WHERE id = $1 AND user_id = $2 AND task_type = 'recurring' AND is_active = TRUE", task_id, user_id)
+            if routine:
+                await state.update_data(completing_item={"id": routine['id'], "type": "routine", "title": routine['title']})
+                kb = ReplyKeyboardMarkup(resize_keyboard=True)
+                kb.add(KeyboardButton("✅ Да, выполнено"), KeyboardButton("↩️ Отмена"))
+                await message.answer(f"«{routine['title']}» — выполнено?", reply_markup=kb)
+                return
+    else:
+        # Старый поиск по началу названия (если кнопка без ID)
+        title_fragment = text
+        if " (" in title_fragment:
+            title_fragment = title_fragment.split(" (")[0]
+        async with db.pool.acquire() as conn:
+            task = await conn.fetchrow(
+                "SELECT id, title FROM tasks WHERE user_id = $1 AND title LIKE $2 AND task_type = 'once' AND is_active = TRUE LIMIT 1",
+                user_id, f"{title_fragment}%"
+            )
+            if task:
+                await state.update_data(completing_item={"id": task['id'], "type": "task", "title": task['title']})
+                kb = ReplyKeyboardMarkup(resize_keyboard=True)
+                kb.add(KeyboardButton("✅ Да, выполнено"), KeyboardButton("↩️ Отмена"))
+                await message.answer(f"«{task['title']}» — выполнено?", reply_markup=kb)
+                return
+            routine = await conn.fetchrow(
+                "SELECT id, title FROM tasks WHERE user_id = $1 AND title LIKE $2 AND task_type = 'recurring' AND is_active = TRUE LIMIT 1",
+                user_id, f"{title_fragment}%"
+            )
+            if routine:
+                await state.update_data(completing_item={"id": routine['id'], "type": "routine", "title": routine['title']})
+                kb = ReplyKeyboardMarkup(resize_keyboard=True)
+                kb.add(KeyboardButton("✅ Да, выполнено"), KeyboardButton("↩️ Отмена"))
+                await message.answer(f"«{routine['title']}» — выполнено?", reply_markup=kb)
+                return
 
     await message.answer("❌ Не найдено.")
 
@@ -377,7 +401,7 @@ async def my_tasks(message: types.Message, state: FSMContext):
         if t['done']: line = f"~{line}~"
         text += line + "\n"
         if not t['done'] and t['is_active']:
-            kb.add(KeyboardButton(f"✅ {t['title'][:20]}"))
+            kb.add(KeyboardButton(f"✅ {t['title'][:18]} #{t['id']}"))
     kb.add(KeyboardButton("⬅️ Назад"))
     await message.answer(text, reply_markup=kb, parse_mode="Markdown")
 
