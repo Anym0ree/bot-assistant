@@ -7,15 +7,6 @@ from utils import edit_or_send, delete_dialog_message, send_temp_message, safe_f
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from plugins.achievements import track_action
 
-# Добавляем recipe в FoodStates, если его там нет
-if not hasattr(FoodStates, 'recipe'):
-    FoodStates.recipe = FoodStates.all()[-1] + 1  # или проще: from aiogram.dispatcher.filters.state import State; FoodStates.recipe = State()
-
-# Но лучше просто прописать в states.py, а здесь используем. Пока костыль:
-from aiogram.dispatcher.filters.state import State
-if not hasattr(FoodStates, 'recipe'):
-    FoodStates.recipe = State()
-
 async def food_drink_menu(message: types.Message):
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add("➕ Добавить еду/напитки", "📋 Посмотреть сегодня")
