@@ -23,7 +23,7 @@ class DaySummaryStates(StatesGroup):
 class FoodStates(StatesGroup):
     meal_type = State()
     food_text = State()
-
+    recipe = State()
 class DrinkStates(StatesGroup):
     drink_type = State()
     amount = State()
