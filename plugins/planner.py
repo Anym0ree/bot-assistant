@@ -36,7 +36,7 @@ class DailyQuestionStates(StatesGroup):
     answer = State()
 
 # -----------------------------------------------------------
-# 📋 ДАШБОРД «СЕГОДНЯ»
+# 📋 ДАШБОРД «СЕГОДНЯ» (время и кнопки работают)
 # -----------------------------------------------------------
 async def today_view(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -91,40 +91,66 @@ async def today_view(message: types.Message, state: FSMContext):
     quick_kb.add(KeyboardButton("✅ Записать сон"), KeyboardButton("⚡ Быстрый чекин"))
     quick_kb.add(KeyboardButton("🍽🥤 Еда и напитки"), KeyboardButton("📝 Итог дня"))
 
-    # Задачи и рутины
+    # Задачи и рутины с временем
     tasks = await db.get_upcoming_tasks(user_id)
     routines = await db.get_recurring_tasks_by_user(user_id)
     active_items = []
+
     for t in tasks:
         if t['is_active']:
-            active_items.append({"title": t['title'], "id": t['id'], "type": "task"})
+            time_str = t['start_time'].strftime("%H:%M") if hasattr(t['start_time'], 'strftime') else str(t['start_time'])
+            active_items.append({
+                "title": t['title'],
+                "id": t['id'],
+                "type": "task",
+                "time": time_str
+            })
+
     for r in routines:
         if await should_run_today(r, today_date):
             done = await db.was_routine_completed_today(r['id'], today_str)
             if not done:
-                active_items.append({"title": r['title'], "id": r['id'], "type": "routine"})
+                t = r['start_time']
+                if isinstance(t, str):
+                    time_str = t
+                else:
+                    time_str = t.strftime("%H:%M") if hasattr(t, 'strftime') else str(t)
+                active_items.append({
+                    "title": r['title'],
+                    "id": r['id'],
+                    "type": "routine",
+                    "time": time_str
+                })
 
     if active_items:
         text += "\n📌 *Задачи и рутины:*\n"
         for item in active_items:
-            text += f"  • {item['title']}\n"
+            text += f"  • {item['title']} — {item['time']}\n"
         for item in active_items:
-            quick_kb.add(KeyboardButton(f"✅ {item['title'][:30]}"))
+            # В кнопку добавляем время, если помещается (до 35 символов)
+            btn_text = f"✅ {item['title'][:20]}"
+            if len(btn_text) + len(item['time']) + 3 <= 35:
+                btn_text += f" ({item['time']})"
+            quick_kb.add(KeyboardButton(btn_text))
     else:
         text += "📌 *На сегодня ничего не запланировано.*"
 
     await message.answer(text, reply_markup=quick_kb, parse_mode="Markdown")
 
 # -----------------------------------------------------------
-# ПОДТВЕРЖДЕНИЕ (исправленный поиск по началу названия)
+# ПОДТВЕРЖДЕНИЕ (поиск по началу названия – работает)
 # -----------------------------------------------------------
 async def complete_item_start(message: types.Message, state: FSMContext):
     if not message.text.startswith("✅ "):
         return
     title_fragment = message.text[2:].strip()
+    # Убираем возможное время в скобках, если оно было добавлено
+    if " (" in title_fragment:
+        title_fragment = title_fragment.split(" (")[0]
     user_id = message.from_user.id
 
     async with db.pool.acquire() as conn:
+        # Ищем задачу по началу названия
         task = await conn.fetchrow(
             "SELECT id, title FROM tasks WHERE user_id = $1 AND title LIKE $2 AND task_type = 'once' AND is_active = TRUE LIMIT 1",
             user_id, f"{title_fragment}%"
@@ -346,7 +372,8 @@ async def my_tasks(message: types.Message, state: FSMContext):
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     for t in tasks:
         icon = "✅" if t['done'] else "⬜"
-        line = f"{icon} {t['title']} — {t['start_date']} {t['start_time']}"
+        time_str = t['start_time'].strftime("%H:%M") if hasattr(t['start_time'], 'strftime') else str(t['start_time'])
+        line = f"{icon} {t['title']} — {t['start_date']} {time_str}"
         if t['done']: line = f"~{line}~"
         text += line + "\n"
         if not t['done'] and t['is_active']:
@@ -403,7 +430,10 @@ async def my_routines(message: types.Message, state: FSMContext):
     if not routines: await message.answer("Нет активных рутин.")
     else:
         text = "📋 *Мои рутины:*\n"
-        for r in routines: text += f"• {r['title']} — {r['start_time']}\n"
+        for r in routines:
+            t = r['start_time']
+            time_str = t if isinstance(t, str) else t.strftime("%H:%M") if hasattr(t, 'strftime') else str(t)
+            text += f"• {r['title']} — {time_str}\n"
         await message.answer(text, parse_mode="Markdown")
     await plans_menu(message, state)
 
