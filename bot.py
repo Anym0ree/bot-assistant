@@ -136,6 +136,34 @@ async def on_shutdown_polling(dp):
     except Exception as e:
         logging.error(f"❌ Ошибка при закрытии БД: {e}")
 
+# ========== ОБРАБОТЧИК КОМАНДЫ /done ==========
+@dp.message_handler(commands=['done'])
+async def cmd_done(message: types.Message):
+    """Отметить задачу выполненной по её ID"""
+    try:
+        # Извлекаем ID из команды /done <ID>
+        command_parts = message.text.split()
+        if len(command_parts) != 2:
+            await message.reply("❌ Использование: /done <ID задачи>\nПример: /done 5")
+            return
+
+        task_id = int(command_parts[1])
+        user_id = message.from_user.id
+
+        # Отмечаем задачу выполненной
+        success = await db.complete_task(task_id, user_id)
+
+        if success:
+            await message.reply(f"✅ Задача с ID {task_id} отмечена как выполненная!")
+        else:
+            await message.reply(f"❌ Не удалось отметить задачу с ID {task_id} как выполненную. Проверьте ID и убедитесь, что эта задача принадлежит вам.")
+
+    except ValueError:
+        await message.reply("❌ ID задачи должен быть числом. Пример: /done 5")
+    except Exception as e:
+        logging.error(f"Ошибка в обработчике команды /done: {e}")
+        await message.reply("❌ Произошла ошибка при обработке команды.")
+
 # ========== ИНЛАЙН-РЕЖИМ (быстрое добавление еды/напитков) ==========
 from aiogram.types import InlineQueryResultArticle, InputTextMessageContent
 
